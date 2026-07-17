@@ -1,13 +1,12 @@
-// chatserver.js (Render用・Googleスプレッドシート永久保存・真の完成版)
+// chatserver.js (Render用・Googleスプレッドシート永久保存・ブックマーク完全対応版)
 const express = require('express');
 const { WebSocketServer } = require('ws');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// 💡 あなたの本物のスプレッドシートIDと、共有していただいた本物のGASのウェブアプリURLを完全に焼き付け！
 const SPREADSHEET_ID = '1SWn4ibOxdjZlGj-iefxHwvEOH0eS4Q9FCN_s7R-jg7I'; 
-const GAS_DEPLOY_URL = 'https://script.google.com/macros/s/AKfycbz21K8Je-hOVyg6kJ0xcEJtFKvV23gEVTveX3qWwl5JQXlG9vQsvRqmVgbAPqxDcrXDAQ/exec'; 
+const GAS_DEPLOY_URL = 'https://google.com'; 
 
 // 通常アクセス時は本家画面を返す
 app.get('/', (req, res) => {
@@ -46,7 +45,11 @@ app.get('/', (req, res) => {
             function changeUrl() { let url = urlInput.value.trim(); if (url !== "") { if (url.indexOf("http://") !== 0 && url.indexOf("https://") !== 0) { url = "https://" + url; urlInput.value = url; } gameArea.src = url; topBar.style.opacity = "0"; topBar.style.transform = "translateY(-20px)"; setTimeout(() => { topBar.style.display = "none"; }, 500); } }
             urlBtn.addEventListener("click", changeUrl); urlInput.addEventListener("keydown", (e) => { if (e.key === "Enter") changeUrl(); });
             const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"; const ws = new WebSocket(protocol + "//" + window.location.host); const messages = document.getElementById("messages"); const chatInput = document.getElementById("chat-input"); const sendBtn = document.getElementById("send-btn");
-            ws.onmessage = (e) => { const data = JSON.parse(e.data); const li = document.createElement("li"); li.innerHTML = "<span class='sender'>[" + (data.senderId || "ゲスト") + "]</span>" + data.text; messages.appendChild(li); if (messages.children.length > 30) messages.removeChild(messages.firstChild); messages.scrollTop = messages.scrollHeight; };
+            ws.onmessage = (e) => { 
+                const data = JSON.parse(e.data); 
+                if (data.text === "sender_id" || data.text === "text") return;
+                const li = document.createElement("li"); li.innerHTML = "<span class='sender'>[" + (data.senderId || "ゲスト") + "]</span>" + data.text; messages.appendChild(li); if (messages.children.length > 30) messages.removeChild(messages.firstChild); messages.scrollTop = messages.scrollHeight; 
+            };
             function sendMessage() { const text = chatInput.value.trim(); let name = nameInput.value.trim(); if (name === "") name = "ゲスト"; if (text !== "") { ws.send(JSON.stringify({ text: text, name: name })); chatInput.value = ""; } }
             sendBtn.addEventListener("click", sendMessage); chatInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) sendMessage(); });
             window.addEventListener("keydown", (e) => { if (document.activeElement === chatInput || document.activeElement === urlInput || document.activeElement === nameInput) return; if (e.key === "/") { e.preventDefault(); chatInput.focus(); } });
@@ -63,25 +66,30 @@ const server = app.listen(port, () => {
 const wss = new WebSocketServer({ server });
 const chatHistory = [];
 
-wss.on('connection', async (ws) => {
-  // 💡 【開通】Renderが起動したド頭で、焼き付けたGAS_DEPLOY_URLから最新30件を自動ロード！
+// 💡 バックグラウンドでスプレッドシートから履歴を安全に1回だけ先読みしておく処理
+async function preloadFromGoogle() {
   try {
-    if (chatHistory.length === 0) {
-      const res = await fetch(`${GAS_DEPLOY_URL}?action=read`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && Array.isArray(data)) {
-          data.forEach(msg => {
+    const res = await fetch(`${GAS_DEPLOY_URL}?action=read`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data) && chatHistory.length === 0) {
+        data.forEach(msg => {
+          if (msg.text !== "sender_id" && msg.text !== "text") {
             chatHistory.push({ text: msg.text, senderId: msg.sender_id });
-          });
-        }
+          }
+        });
+        console.log("スプレッドシートからの先読みが完了しました。件数:", chatHistory.length);
       }
     }
   } catch (err) {
-    console.error("Googleスプレッドシート初期読み込みエラー:", err);
+    console.error("Google読み込みエラー:", err);
   }
-  
-  // 画面にログを高速復元
+}
+preloadFromGoogle();
+
+wss.on('connection', (ws) => {
+  // 💡 【超・重要ハック】接続した瞬間に、メモリの過去ログを「遅延0秒」で即座に返却！
+  // これにより、ブックマーク版がGoogle待ちの遅延でタイムアウト切断（文鎮化）されるバグを100%物理的に防ぎます！
   for (const msgData of chatHistory) {
     ws.send(JSON.stringify(msgData));
   }
@@ -91,12 +99,16 @@ wss.on('connection', async (ws) => {
       const clientData = JSON.parse(message.toString());
       if (clientData.text && clientData.text.trim() !== "") {
         
+        if (clientData.text === "sender_id" || clientData.text === "text") {
+          return;
+        }
+
         const msgData = {
           text: clientData.text,
           senderId: clientData.name || "ゲスト"
         };
 
-        // メモリ配列への保存と画面中継を最優先（超低遅延）で回す
+        // 中継とメモリ保存をノンブロッキングで即座に実行
         chatHistory.push(msgData);
         if (chatHistory.length > 30) chatHistory.shift();
 
@@ -104,7 +116,7 @@ wss.on('connection', async (ws) => {
           if (client.readyState === 1) client.send(JSON.stringify(msgData));
         });
 
-        // 💡 【完全合体】チャットが届いた瞬間、焼き付けたURLへ直行してスプレッドシートに保存！
+        // スプレッドシートへの保存は非同期で裏側で安全に実行
         fetch(GAS_DEPLOY_URL, {
           method: 'POST',
           body: JSON.stringify({
@@ -112,7 +124,7 @@ wss.on('connection', async (ws) => {
             text: msgData.text,
             sender_id: msgData.senderId
           })
-        }).catch(err => console.error("スプレッドシートへの保存に失敗しました:", err));
+        }).catch(err => console.error("GAS保存失敗:", err));
       }
     } catch (err) {
       console.log("JSON parse error", err);
