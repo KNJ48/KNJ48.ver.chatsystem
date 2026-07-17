@@ -40,7 +40,7 @@ app.get('/', (req, res) => {
             <div class="bar-group" style="margin-left: 5px; border-left: 1px solid rgba(255,255,255,0.2); padding-left: 10px;"><span class="bar-label">NAME:</span><input type="text" id="name-input" value="ゲスト" maxlength="10"></div>
         </div>
         <iframe id="game-area" src="https://example.com"></iframe>
-        <div id="chat-container"><ul id="messages"></ul><div id="input-area"><input type="text" id="chat-input" placeholder="[/]キーでチャット開始..." autocomplete="off"><button id="send-btn">送信</button></div></div>
+        <div id="chat-container"><ul id="messages"></ul><div id="input-area"><input type="text" id="chat-input" placeholder="チャットを開始..." autocomplete="off"><button id="send-btn">送信</button></div></div>
         <script>
             const gameArea = document.getElementById("game-area"); const urlInput = document.getElementById("url-input"); const urlBtn = document.getElementById("url-btn"); const nameInput = document.getElementById("name-input"); const topBar = document.getElementById("top-bar-container");
             function changeUrl() { let url = urlInput.value.trim(); if (url !== "") { if (url.indexOf("http://") !== 0 && url.indexOf("https://") !== 0) { url = "https://" + url; urlInput.value = url; } gameArea.src = url; topBar.style.opacity = "0"; topBar.style.transform = "translateY(-20px)"; setTimeout(() => { topBar.style.display = "none"; }, 500); } }
