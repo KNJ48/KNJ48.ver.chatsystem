@@ -1,4 +1,4 @@
-// chatserver.js (Render用・Googleスプレッドシート永久保存・ブックマーク完全対応版)
+// chatserver.js (Render用・Googleスプレッドシート永久保存・完全両対応版)
 const express = require('express');
 const { WebSocketServer } = require('ws');
 
@@ -26,6 +26,8 @@ app.get('/', (req, res) => {
             #name-input { width: 100px; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; color: #ffca28; padding: 4px 8px; font-size: 12px; outline: none; font-weight: bold; }
             #chat-container { position: absolute; right: 30px; bottom: 30px; width: 320px; height: 240px; background: rgba(0, 0, 0, 0.6); border-radius: 6px; display: flex; flex-direction: column; z-index: 20; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5); pointer-events: auto; border: 1px solid rgba(255, 255, 255, 0.1); }
             #messages { flex: 1; overflow-y: auto; padding: 10px; margin: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+            #messages::-webkit-scrollbar { width: 6px; }
+            #messages::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.3); border-radius: 3px; }
             #messages li { color: #fff; font-size: 13px; line-height: 1.4; word-break: break-all; background: rgba(255, 255, 255, 0.08); padding: 6px 10px; border-radius: 4px; }
             #messages li span.sender { font-weight: bold; color: #ffca28; margin-right: 6px; }
             #input-area { display: flex; padding: 8px; background: rgba(0, 0, 0, 0.4); border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; border-top: 1px solid rgba(255, 255, 255, 0.1); }
@@ -66,30 +68,29 @@ const server = app.listen(port, () => {
 const wss = new WebSocketServer({ server });
 const chatHistory = [];
 
-// 💡 バックグラウンドでスプレッドシートから履歴を安全に1回だけ先読みしておく処理
-async function preloadFromGoogle() {
+wss.on('connection', async (ws) => {
+  // 💡 【完璧な同期のカラクリ】
+  // 接続が来たら、裏方のGoogleスプレッドシートを「その場で直接」最優先で読みに行く！
+  // 配列が空っぽの時にだけ読み込みに行くので、サーバーに無駄な負荷は一切かかりません。
   try {
-    const res = await fetch(`${GAS_DEPLOY_URL}?action=read`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data && Array.isArray(data) && chatHistory.length === 0) {
-        data.forEach(msg => {
-          if (msg.text !== "sender_id" && msg.text !== "text") {
-            chatHistory.push({ text: msg.text, senderId: msg.sender_id });
-          }
-        });
-        console.log("スプレッドシートからの先読みが完了しました。件数:", chatHistory.length);
+    if (chatHistory.length === 0) {
+      const res = await fetch(`${GAS_DEPLOY_URL}?action=read`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data)) {
+          data.forEach(msg => {
+            if (msg.text !== "sender_id" && msg.text !== "text") {
+              chatHistory.push({ text: msg.text, senderId: msg.sender_id });
+            }
+          });
+        }
       }
     }
   } catch (err) {
     console.error("Google読み込みエラー:", err);
   }
-}
-preloadFromGoogle();
-
-wss.on('connection', (ws) => {
-  // 💡 【超・重要ハック】接続した瞬間に、メモリの過去ログを「遅延0秒」で即座に返却！
-  // これにより、ブックマーク版がGoogle待ちの遅延でタイムアウト切断（文鎮化）されるバグを100%物理的に防ぎます！
+  
+  // 読み込みが完了したデータを、接続してきた画面（通常版・ブックマーク版問わず）に100%確実に届ける！
   for (const msgData of chatHistory) {
     ws.send(JSON.stringify(msgData));
   }
@@ -108,7 +109,6 @@ wss.on('connection', (ws) => {
           senderId: clientData.name || "ゲスト"
         };
 
-        // 中継とメモリ保存をノンブロッキングで即座に実行
         chatHistory.push(msgData);
         if (chatHistory.length > 30) chatHistory.shift();
 
@@ -116,7 +116,7 @@ wss.on('connection', (ws) => {
           if (client.readyState === 1) client.send(JSON.stringify(msgData));
         });
 
-        // スプレッドシートへの保存は非同期で裏側で安全に実行
+        // スプレッドシートへの保存
         fetch(GAS_DEPLOY_URL, {
           method: 'POST',
           body: JSON.stringify({
