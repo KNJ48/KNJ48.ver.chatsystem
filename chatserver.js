@@ -15,7 +15,7 @@ app.get('/', (req, res) => {
     <!DOCTYPE html>
     <html lang="ja">
     <head>
-        <meta charset="UTF-8"><title>カスタムゲームチャット Pro</title>
+        <meta charset="UTF-8"><title>カスタムチャットシステム Pro</title>
         <style>
             body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: sans-serif; background-color: #111; color: #fff; }
             #game-area { width: 100%; height: 100%; border: none; position: absolute; top: 0; left: 0; z-index: 1; }
