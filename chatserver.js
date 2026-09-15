@@ -1,7 +1,7 @@
 ```javascript
 // chatserver.js
-// Render用・Googleスプレッドシート永久保存・タイムスタンプ対応
-// 履歴取得の詳細デバッグログ付き
+// Render用・Googleスプレッドシート永久保存・タイムスタンプ追加版
+// 履歴取得デバッグログ追加版
 
 const express = require('express');
 const { WebSocketServer } = require('ws');
@@ -17,10 +17,7 @@ const GAS_DEPLOY_URL =
   'https://script.google.com/macros/s/AKfycbz21K8Je-hOVyg6kJ0xcEJtFKvV23gEVTveX3qWwl5JQXlG9vQsvRqmVgbAPqxDcrXDAQ/exec';
 
 
-// ========================================
-// Webページ
-// ========================================
-
+// 通常アクセス時は本家画面を返す
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -173,7 +170,7 @@ app.get('/', (req, res) => {
             #chat-input {
                 flex: 1;
                 background: rgba(255, 255, 255, 0.15);
-                border: 1px solid rgba(255,255,255,0.1);
+                border: 1px solid rgba(255, 255, 255, 0.1);
                 border-radius: 4px;
                 color: #fff;
                 padding: 6px 10px;
@@ -201,13 +198,18 @@ app.get('/', (req, res) => {
 
             <div class="bar-group">
                 <span class="bar-label">URL:</span>
+
                 <input
                     type="text"
                     id="url-input"
                     value="https://example.com"
                 >
-                <button id="url-btn">移動</button>
+
+                <button id="url-btn">
+                    移動
+                </button>
             </div>
+
 
             <div
                 class="bar-group"
@@ -217,7 +219,9 @@ app.get('/', (req, res) => {
                     padding-left: 10px;
                 "
             >
-                <span class="bar-label">NAME:</span>
+                <span class="bar-label">
+                    NAME:
+                </span>
 
                 <input
                     type="text"
@@ -249,7 +253,9 @@ app.get('/', (req, res) => {
                     autocomplete="off"
                 >
 
-                <button id="send-btn">送信</button>
+                <button id="send-btn">
+                    送信
+                </button>
 
             </div>
 
@@ -285,20 +291,26 @@ app.get('/', (req, res) => {
                         url.indexOf("http://") !== 0 &&
                         url.indexOf("https://") !== 0
                     ) {
+
                         url = "https://" + url;
+
                         urlInput.value = url;
                     }
 
+
                     gameArea.src = url;
+
 
                     topBar.style.opacity = "0";
 
                     topBar.style.transform =
                         "translateY(-20px)";
 
+
                     setTimeout(() => {
 
-                        topBar.style.display = "none";
+                        topBar.style.display =
+                            "none";
 
                     }, 500);
                 }
@@ -353,12 +365,15 @@ app.get('/', (req, res) => {
                     return "";
                 }
 
+
                 const date =
                     new Date(timestamp);
+
 
                 if (isNaN(date.getTime())) {
                     return "";
                 }
+
 
                 return new Intl.DateTimeFormat(
                     "ja-JP",
@@ -377,6 +392,7 @@ app.get('/', (req, res) => {
                 const data =
                     JSON.parse(e.data);
 
+
                 const li =
                     document.createElement("li");
 
@@ -384,12 +400,15 @@ app.get('/', (req, res) => {
                 const sender =
                     document.createElement("span");
 
-                sender.className = "sender";
+                sender.className =
+                    "sender";
+
 
                 sender.textContent =
                     "[" +
                     (data.senderId || "ゲスト") +
                     "]";
+
 
                 li.appendChild(sender);
 
@@ -402,10 +421,12 @@ app.get('/', (req, res) => {
                     timestamp.className =
                         "timestamp";
 
+
                     timestamp.textContent =
                         formatTimestamp(
                             data.timestamp
                         );
+
 
                     li.appendChild(timestamp);
                 }
@@ -416,13 +437,16 @@ app.get('/', (req, res) => {
                         data.text || ""
                     );
 
+
                 li.appendChild(text);
 
 
                 messages.appendChild(li);
 
 
-                if (messages.children.length > 30) {
+                if (
+                    messages.children.length > 30
+                ) {
 
                     messages.removeChild(
                         messages.firstChild
@@ -439,6 +463,7 @@ app.get('/', (req, res) => {
 
                 const text =
                     chatInput.value.trim();
+
 
                 let name =
                     nameInput.value.trim();
@@ -457,6 +482,7 @@ app.get('/', (req, res) => {
                             name: name
                         })
                     );
+
 
                     chatInput.value = "";
                 }
@@ -477,6 +503,7 @@ app.get('/', (req, res) => {
                         e.key === "Enter" &&
                         !e.isComposing
                     ) {
+
                         sendMessage();
                     }
 
@@ -519,14 +546,15 @@ app.get('/', (req, res) => {
 // HTTPサーバー起動
 // ========================================
 
-const server = app.listen(
-    port,
-    () => {
-        console.log(
-            `Server running on port ${port}`
-        );
-    }
-);
+const server =
+    app.listen(
+        port,
+        () => {
+            console.log(
+                `Server running on port ${port}`
+            );
+        }
+    );
 
 
 // ========================================
@@ -547,353 +575,376 @@ const chatHistory = [];
 // WebSocket接続
 // ========================================
 
-wss.on('connection', async (ws) => {
+wss.on(
+    'connection',
+    async (ws) => {
 
-    const connectionStart =
-        Date.now();
-
-    console.log(
-        `[HISTORY] WebSocket接続開始`
-    );
-
-    console.log(
-        `[HISTORY] 現在のchatHistory件数: ${chatHistory.length}`
-    );
+        const historyStartTime =
+            Date.now();
 
 
-    // ====================================
-    // GASから履歴取得
-    // ====================================
+        console.log(
+            "[HISTORY] ============================="
+        );
 
-    try {
+        console.log(
+            "[HISTORY] WebSocket接続開始"
+        );
 
-        if (chatHistory.length === 0) {
-
-            console.log(
-                `[HISTORY] chatHistoryが空`
-            );
-
-            console.log(
-                `[HISTORY] GAS fetch開始`
-            );
+        console.log(
+            "[HISTORY] 現在のchatHistory件数:",
+            chatHistory.length
+        );
 
 
-            const fetchStart =
-                Date.now();
+        // ====================================
+        // 起動時にGASから最新30件を読み込む
+        // ====================================
 
+        try {
 
-            const res =
-                await fetch(
-                    `${GAS_DEPLOY_URL}?action=read`
-                );
-
-
-            const fetchEnd =
-                Date.now();
-
-
-            console.log(
-                `[HISTORY] GAS fetch完了: ${fetchEnd - fetchStart}ms`
-            );
-
-            console.log(
-                `[HISTORY] HTTPステータス: ${res.status}`
-            );
-
-            console.log(
-                `[HISTORY] res.ok: ${res.ok}`
-            );
-
-
-            if (res.ok) {
+            if (chatHistory.length === 0) {
 
                 console.log(
-                    `[HISTORY] res.json()開始`
+                    "[HISTORY] chatHistoryが空"
+                );
+
+                console.log(
+                    "[HISTORY] GAS fetch開始"
                 );
 
 
-                const jsonStart =
+                const fetchStartTime =
                     Date.now();
 
 
-                const data =
-                    await res.json();
-
-
-                const jsonEnd =
-                    Date.now();
+                const res =
+                    await fetch(
+                        `${GAS_DEPLOY_URL}?action=read`
+                    );
 
 
                 console.log(
-                    `[HISTORY] res.json()完了: ${jsonEnd - jsonStart}ms`
+                    "[HISTORY] GAS fetch完了:",
+                    Date.now() - fetchStartTime,
+                    "ms"
                 );
 
 
                 console.log(
-                    `[HISTORY] GASから受信した件数: ${
+                    "[HISTORY] HTTPステータス:",
+                    res.status
+                );
+
+
+                console.log(
+                    "[HISTORY] res.ok:",
+                    res.ok
+                );
+
+
+                if (res.ok) {
+
+                    console.log(
+                        "[HISTORY] res.json()開始"
+                    );
+
+
+                    const jsonStartTime =
+                        Date.now();
+
+
+                    const data =
+                        await res.json();
+
+
+                    console.log(
+                        "[HISTORY] res.json()完了:",
+                        Date.now() - jsonStartTime,
+                        "ms"
+                    );
+
+
+                    console.log(
+                        "[HISTORY] 受信データ:",
                         Array.isArray(data)
-                            ? data.length
-                            : "配列ではない"
-                    }`
-                );
-
-
-                if (
-                    data &&
-                    Array.isArray(data)
-                ) {
-
-                    console.log(
-                        `[HISTORY] chatHistoryへの格納開始`
+                            ? `配列 ${data.length}件`
+                            : typeof data
                     );
 
 
-                    const historyStart =
-                        Date.now();
+                    if (
+                        data &&
+                        Array.isArray(data)
+                    ) {
+
+                        console.log(
+                            "[HISTORY] chatHistoryへの格納開始"
+                        );
 
 
-                    data.forEach(msg => {
-
-                        chatHistory.push({
-
-                            text:
-                                msg.text,
-
-                            senderId:
-                                msg.sender_id,
-
-                            timestamp:
-                                msg.timestamp || null
-                        });
-
-                    });
+                        const pushStartTime =
+                            Date.now();
 
 
-                    const historyEnd =
-                        Date.now();
+                        data.forEach(
+                            msg => {
+
+                                chatHistory.push({
+                                    text:
+                                        msg.text,
+
+                                    senderId:
+                                        msg.sender_id,
+
+                                    timestamp:
+                                        msg.timestamp ||
+                                        null
+                                });
+
+                            }
+                        );
 
 
-                    console.log(
-                        `[HISTORY] chatHistoryへの格納完了: ${
-                            historyEnd - historyStart
-                        }ms`
-                    );
+                        console.log(
+                            "[HISTORY] chatHistoryへの格納完了:",
+                            Date.now() - pushStartTime,
+                            "ms"
+                        );
 
 
-                    console.log(
-                        `[HISTORY] 現在のchatHistory件数: ${
+                        console.log(
+                            "[HISTORY] 現在のchatHistory件数:",
                             chatHistory.length
-                        }`
+                        );
+
+                    }
+
+                } else {
+
+                    console.error(
+                        "[HISTORY] GAS HTTPエラー:",
+                        res.status
                     );
                 }
 
             } else {
 
-                console.error(
-                    `[HISTORY] GAS HTTPエラー: ${res.status}`
+                console.log(
+                    "[HISTORY] chatHistoryに既存データあり"
                 );
 
+                console.log(
+                    "[HISTORY] GAS取得をスキップ"
+                );
             }
-
-        } else {
-
-            console.log(
-                `[HISTORY] chatHistoryに既に履歴あり。GAS取得をスキップ`
-            );
-
-        }
-
-    } catch (err) {
-
-        console.error(
-            `[HISTORY] Googleスプレッドシート初期読み込みエラー:`,
-            err
-        );
-
-    }
-
-
-    // ====================================
-    // ブラウザへ履歴送信
-    // ====================================
-
-    console.log(
-        `[HISTORY] ブラウザへの履歴送信開始`
-    );
-
-    console.log(
-        `[HISTORY] 送信件数: ${chatHistory.length}`
-    );
-
-
-    const sendStart =
-        Date.now();
-
-
-    let sendCount = 0;
-
-
-    for (const msgData of chatHistory) {
-
-        try {
-
-            ws.send(
-                JSON.stringify(msgData)
-            );
-
-            sendCount++;
 
         } catch (err) {
 
             console.error(
-                `[HISTORY] 履歴送信エラー:`,
+                "[HISTORY] Googleスプレッドシート初期読み込みエラー:",
                 err
             );
 
-            break;
         }
-    }
 
 
-    const sendEnd =
-        Date.now();
+        // ====================================
+        // 画面にログを高速復元
+        // ====================================
+
+        console.log(
+            "[HISTORY] ブラウザへの履歴送信開始"
+        );
 
 
-    console.log(
-        `[HISTORY] ブラウザへの履歴送信完了: ${
-            sendEnd - sendStart
-        }ms`
-    );
-
-    console.log(
-        `[HISTORY] 実際の送信件数: ${sendCount}`
-    );
+        console.log(
+            "[HISTORY] 送信予定件数:",
+            chatHistory.length
+        );
 
 
-    const connectionEnd =
-        Date.now();
+        const sendStartTime =
+            Date.now();
 
 
-    console.log(
-        `[HISTORY] WebSocket接続処理全体: ${
-            connectionEnd - connectionStart
-        }ms`
-    );
+        let sentCount = 0;
 
 
-    // ====================================
-    // 新規メッセージ
-    // ====================================
+        for (
+            const msgData of chatHistory
+        ) {
 
-    ws.on('message', async (message) => {
+            try {
 
-        try {
-
-            const clientData =
-                JSON.parse(
-                    message.toString()
+                ws.send(
+                    JSON.stringify(msgData)
                 );
 
 
-            if (
-                clientData.text &&
-                clientData.text.trim() !== ""
-            ) {
+                sentCount++;
 
-                // サーバー側でタイムスタンプ生成
-                const msgData = {
+            } catch (err) {
 
-                    text:
-                        clientData.text,
-
-                    senderId:
-                        clientData.name ||
-                        "ゲスト",
-
-                    timestamp:
-                        new Date().toISOString()
-                };
-
-
-                // メモリへ保存
-                chatHistory.push(
-                    msgData
+                console.error(
+                    "[HISTORY] 履歴送信エラー:",
+                    err
                 );
 
-
-                if (
-                    chatHistory.length > 30
-                ) {
-
-                    chatHistory.shift();
-                }
+                break;
+            }
+        }
 
 
-                // 全クライアントへ送信
-                wss.clients.forEach(
-                    (client) => {
+        console.log(
+            "[HISTORY] ブラウザへの履歴送信完了:",
+            Date.now() - sendStartTime,
+            "ms"
+        );
+
+
+        console.log(
+            "[HISTORY] 実際の送信件数:",
+            sentCount
+        );
+
+
+        console.log(
+            "[HISTORY] 接続処理全体:",
+            Date.now() - historyStartTime,
+            "ms"
+        );
+
+
+        console.log(
+            "[HISTORY] ============================="
+        );
+
+
+        // ====================================
+        // 新規メッセージ受信
+        // ====================================
+
+        ws.on(
+            'message',
+            async (message) => {
+
+                try {
+
+                    const clientData =
+                        JSON.parse(
+                            message.toString()
+                        );
+
+
+                    if (
+                        clientData.text &&
+                        clientData.text.trim() !== ""
+                    ) {
+
+                        // サーバー側でタイムスタンプを1回だけ生成
+                        const msgData = {
+
+                            text:
+                                clientData.text,
+
+                            senderId:
+                                clientData.name ||
+                                "ゲスト",
+
+                            timestamp:
+                                new Date().toISOString()
+                        };
+
+
+                        // メモリ配列への保存
+                        chatHistory.push(
+                            msgData
+                        );
+
 
                         if (
-                            client.readyState === 1
+                            chatHistory.length > 30
                         ) {
 
-                            client.send(
-                                JSON.stringify(
-                                    msgData
-                                )
-                            );
+                            chatHistory.shift();
                         }
 
+
+                        // 全クライアントへ送信
+                        wss.clients.forEach(
+                            (client) => {
+
+                                if (
+                                    client.readyState === 1
+                                ) {
+
+                                    client.send(
+                                        JSON.stringify(
+                                            msgData
+                                        )
+                                    );
+                                }
+
+                            }
+                        );
+
+
+                        // ====================================
+                        // GASへ保存
+                        // ====================================
+
+                        fetch(
+                            GAS_DEPLOY_URL,
+                            {
+                                method: 'POST',
+
+                                headers: {
+                                    'Content-Type':
+                                        'application/json'
+                                },
+
+                                body:
+                                    JSON.stringify({
+
+                                        action:
+                                            'write',
+
+                                        text:
+                                            msgData.text,
+
+                                        sender_id:
+                                            msgData.senderId,
+
+                                        timestamp:
+                                            msgData.timestamp
+                                    })
+                            }
+                        ).catch(
+                            err => {
+
+                                console.error(
+                                    "スプレッドシートへの保存に失敗しました:",
+                                    err
+                                );
+
+                            }
+                        );
+
                     }
-                );
 
+                } catch (err) {
 
-                // GASへ保存
-                fetch(
-                    GAS_DEPLOY_URL,
-                    {
-                        method: 'POST',
-
-                        headers: {
-                            'Content-Type':
-                                'application/json'
-                        },
-
-                        body:
-                            JSON.stringify({
-                                action: 'write',
-
-                                text:
-                                    msgData.text,
-
-                                sender_id:
-                                    msgData.senderId,
-
-                                timestamp:
-                                    msgData.timestamp
-                            })
-                    }
-                ).catch(err => {
-
-                    console.error(
-                        "スプレッドシートへの保存に失敗しました:",
+                    console.log(
+                        "JSON parse error",
                         err
                     );
 
-                });
+                }
 
             }
+        );
 
-        } catch (err) {
-
-            console.log(
-                "JSON parse error",
-                err
-            );
-
-        }
-
-    });
-
-});
+    }
+);
 ```
