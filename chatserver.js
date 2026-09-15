@@ -1,6 +1,8 @@
 // ============================================================
 // chatserver.js
 // Render + WebSocket + Google Apps Script + Spreadsheet
+// 表示時刻: 時:分
+// 保存timestamp: 秒・ミリ秒まで保持
 // ============================================================
 
 const express = require("express");
@@ -587,6 +589,8 @@ const ws =
 
 // ============================================================
 // TIME
+// 画面表示は「時:分」のみ
+// 保存されるtimestamp自体は秒・ミリ秒まで保持
 // ============================================================
 
 function formatTimestamp(value) {
@@ -618,9 +622,6 @@ function formatTimestamp(value) {
         "2-digit",
 
       minute:
-        "2-digit",
-
-      second:
         "2-digit",
 
       hour12:
@@ -895,7 +896,6 @@ const server =
       );
 
 
-      // 起動直後にGASへ接続
       loadHistoryFromGAS();
     }
   );
@@ -1168,6 +1168,7 @@ async function saveMessageToGAS(
       sender_id:
         message.senderId,
 
+      // 保存用timestampは秒・ミリ秒を削らない
       timestamp:
         message.timestamp
     };
@@ -1320,7 +1321,6 @@ wss.on(
     );
 
 
-    // 起動時ロードがまだなら待つ
     if (
       !historyLoaded
     ) {
@@ -1418,7 +1418,7 @@ wss.on(
 
 
           // ==================================================
-          // タイムスタンプはここで一度だけ生成
+          // timestampは正確な時刻を保持
           // ==================================================
 
           const timestamp =
@@ -1466,7 +1466,7 @@ wss.on(
 
 
           // ==================================================
-          // 全員に送信
+          // 全クライアントへ送信
           // ==================================================
 
           wss.clients.forEach(
