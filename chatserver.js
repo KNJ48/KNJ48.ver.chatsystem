@@ -1,4 +1,8 @@
-// chatserver.js (Render用・Googleスプレッドシート永久保存・タイムスタンプ追加版)
+```javascript
+// chatserver.js
+// Render用・Googleスプレッドシート永久保存・タイムスタンプ対応
+// 履歴取得の詳細デバッグログ付き
+
 const express = require('express');
 const { WebSocketServer } = require('ws');
 
@@ -6,243 +10,890 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // スプレッドシートIDとGASのURL
-const SPREADSHEET_ID = '1SWn4ibOxdjZlGj-iefxHwvEOH0eS4Q9FCN_s7R-jg7I';
-const GAS_DEPLOY_URL = 'https://script.google.com/macros/s/AKfycbz21K8Je-hOVyg6kJ0xcEJtFKvV23gEVTveX3qWwl5JQXlG9vQsvRqmVgbAPqxDcrXDAQ/exec';
+const SPREADSHEET_ID =
+  '1SWn4ibOxdjZlGj-iefxHwvEOH0eS4Q9FCN_s7R-jg7I';
 
-// 通常アクセス時は本家画面を返す
+const GAS_DEPLOY_URL =
+  'https://script.google.com/macros/s/AKfycbz21K8Je-hOVyg6kJ0xcEJtFKvV23gEVTveX3qWwl5JQXlG9vQsvRqmVgbAPqxDcrXDAQ/exec';
+
+
+// ========================================
+// Webページ
+// ========================================
+
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html lang="ja">
     <head>
-        <meta charset="UTF-8"><title>カスタムチャットシステム Pro</title>
+        <meta charset="UTF-8">
+        <title>カスタムチャットシステム Pro</title>
+
         <style>
-            body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: sans-serif; background-color: #111; color: #fff; }
-            #game-area { width: 100%; height: 100%; border: none; position: absolute; top: 0; left: 0; z-index: 1; }
-            #top-bar-container { position: absolute; top: 15px; left: 15px; z-index: 10; display: flex; gap: 10px; background: rgba(0,0,0,0.6); padding: 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 10px rgba(0,0,0,0.4); transition: opacity 0.5s ease, transform 0.5s ease; }
-            .bar-group { display: flex; gap: 4px; align-items: center; }
-            .bar-label { color: #ccc; font-size: 11px; font-weight: bold; }
-            #url-input { width: 220px; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; color: #fff; padding: 4px 8px; font-size: 12px; outline: none; }
-            #url-btn { background: #2196F3; color: white; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px; }
-            #name-input { width: 100px; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; color: #ffca28; padding: 4px 8px; font-size: 12px; outline: none; font-weight: bold; }
-            #chat-container { position: absolute; right: 30px; bottom: 30px; width: 320px; height: 240px; background: rgba(0, 0, 0, 0.6); border-radius: 6px; display: flex; flex-direction: column; z-index: 20; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5); pointer-events: auto; border: 1px solid rgba(255, 255, 255, 0.1); }
-            #messages { flex: 1; overflow-y: auto; padding: 10px; margin: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
-            #messages li { color: #fff; font-size: 13px; line-height: 1.4; word-break: break-all; background: rgba(255, 255, 255, 0.08); padding: 6px 10px; border-radius: 4px; }
-            #messages li span.sender { font-weight: bold; color: #ffca28; margin-right: 6px; }
-            #messages li span.timestamp { color: #aaa; font-size: 10px; margin-left: 6px; }
-            #input-area { display: flex; padding: 8px; background: rgba(0, 0, 0, 0.4); border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; border-top: 1px solid rgba(255, 255, 255, 0.1); }
-            #chat-input { flex: 1; background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 4px; color: #fff; padding: 6px 10px; font-size: 13px; outline: none; }
-            #send-btn { background: #4caf50; color: white; border: none; padding: 6px 14px; margin-left: 8px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
+            body, html {
+                margin: 0;
+                padding: 0;
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+                font-family: sans-serif;
+                background-color: #111;
+                color: #fff;
+            }
+
+            #game-area {
+                width: 100%;
+                height: 100%;
+                border: none;
+                position: absolute;
+                top: 0;
+                left: 0;
+                z-index: 1;
+            }
+
+            #top-bar-container {
+                position: absolute;
+                top: 15px;
+                left: 15px;
+                z-index: 10;
+                display: flex;
+                gap: 10px;
+                background: rgba(0,0,0,0.6);
+                padding: 8px;
+                border-radius: 6px;
+                border: 1px solid rgba(255,255,255,0.1);
+                box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+                transition: opacity 0.5s ease, transform 0.5s ease;
+            }
+
+            .bar-group {
+                display: flex;
+                gap: 4px;
+                align-items: center;
+            }
+
+            .bar-label {
+                color: #ccc;
+                font-size: 11px;
+                font-weight: bold;
+            }
+
+            #url-input {
+                width: 220px;
+                background: rgba(255,255,255,0.15);
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 4px;
+                color: #fff;
+                padding: 4px 8px;
+                font-size: 12px;
+                outline: none;
+            }
+
+            #url-btn {
+                background: #2196F3;
+                color: white;
+                border: none;
+                padding: 4px 10px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-weight: bold;
+                font-size: 12px;
+            }
+
+            #name-input {
+                width: 100px;
+                background: rgba(255,255,255,0.15);
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 4px;
+                color: #ffca28;
+                padding: 4px 8px;
+                font-size: 12px;
+                outline: none;
+                font-weight: bold;
+            }
+
+            #chat-container {
+                position: absolute;
+                right: 30px;
+                bottom: 30px;
+                width: 320px;
+                height: 240px;
+                background: rgba(0, 0, 0, 0.6);
+                border-radius: 6px;
+                display: flex;
+                flex-direction: column;
+                z-index: 20;
+                box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+                pointer-events: auto;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }
+
+            #messages {
+                flex: 1;
+                overflow-y: auto;
+                padding: 10px;
+                margin: 0;
+                list-style: none;
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+
+            #messages li {
+                color: #fff;
+                font-size: 13px;
+                line-height: 1.4;
+                word-break: break-all;
+                background: rgba(255, 255, 255, 0.08);
+                padding: 6px 10px;
+                border-radius: 4px;
+            }
+
+            #messages li span.sender {
+                font-weight: bold;
+                color: #ffca28;
+                margin-right: 6px;
+            }
+
+            #messages li span.timestamp {
+                color: #aaa;
+                font-size: 10px;
+                margin-left: 6px;
+            }
+
+            #input-area {
+                display: flex;
+                padding: 8px;
+                background: rgba(0, 0, 0, 0.4);
+                border-bottom-left-radius: 6px;
+                border-bottom-right-radius: 6px;
+                border-top: 1px solid rgba(255, 255, 255, 0.1);
+            }
+
+            #chat-input {
+                flex: 1;
+                background: rgba(255, 255, 255, 0.15);
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 4px;
+                color: #fff;
+                padding: 6px 10px;
+                font-size: 13px;
+                outline: none;
+            }
+
+            #send-btn {
+                background: #4caf50;
+                color: white;
+                border: none;
+                padding: 6px 14px;
+                margin-left: 8px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-weight: bold;
+                font-size: 13px;
+            }
         </style>
     </head>
+
     <body>
+
         <div id="top-bar-container">
-            <div class="bar-group"><span class="bar-label">URL:</span><input type="text" id="url-input" value="https://example.com"><button id="url-btn">移動</button></div>
-            <div class="bar-group" style="margin-left: 5px; border-left: 1px solid rgba(255,255,255,0.2); padding-left: 10px;"><span class="bar-label">NAME:</span><input type="text" id="name-input" value="ゲスト" maxlength="10"></div>
+
+            <div class="bar-group">
+                <span class="bar-label">URL:</span>
+                <input
+                    type="text"
+                    id="url-input"
+                    value="https://example.com"
+                >
+                <button id="url-btn">移動</button>
+            </div>
+
+            <div
+                class="bar-group"
+                style="
+                    margin-left: 5px;
+                    border-left: 1px solid rgba(255,255,255,0.2);
+                    padding-left: 10px;
+                "
+            >
+                <span class="bar-label">NAME:</span>
+
+                <input
+                    type="text"
+                    id="name-input"
+                    value="ゲスト"
+                    maxlength="10"
+                >
+            </div>
+
         </div>
-        <iframe id="game-area" src="https://example.com"></iframe>
-        <div id="chat-container"><ul id="messages"></ul><div id="input-area"><input type="text" id="chat-input" placeholder="チャットを開始..." autocomplete="off"><button id="send-btn">送信</button></div></div>
+
+
+        <iframe
+            id="game-area"
+            src="https://example.com"
+        ></iframe>
+
+
+        <div id="chat-container">
+
+            <ul id="messages"></ul>
+
+            <div id="input-area">
+
+                <input
+                    type="text"
+                    id="chat-input"
+                    placeholder="チャットを開始..."
+                    autocomplete="off"
+                >
+
+                <button id="send-btn">送信</button>
+
+            </div>
+
+        </div>
+
 
         <script>
-            const gameArea = document.getElementById("game-area");
-            const urlInput = document.getElementById("url-input");
-            const urlBtn = document.getElementById("url-btn");
-            const nameInput = document.getElementById("name-input");
-            const topBar = document.getElementById("top-bar-container");
+
+            const gameArea =
+                document.getElementById("game-area");
+
+            const urlInput =
+                document.getElementById("url-input");
+
+            const urlBtn =
+                document.getElementById("url-btn");
+
+            const nameInput =
+                document.getElementById("name-input");
+
+            const topBar =
+                document.getElementById("top-bar-container");
+
 
             function changeUrl() {
-                let url = urlInput.value.trim();
+
+                let url =
+                    urlInput.value.trim();
+
                 if (url !== "") {
-                    if (url.indexOf("http://") !== 0 && url.indexOf("https://") !== 0) {
+
+                    if (
+                        url.indexOf("http://") !== 0 &&
+                        url.indexOf("https://") !== 0
+                    ) {
                         url = "https://" + url;
                         urlInput.value = url;
                     }
+
                     gameArea.src = url;
+
                     topBar.style.opacity = "0";
-                    topBar.style.transform = "translateY(-20px)";
+
+                    topBar.style.transform =
+                        "translateY(-20px)";
+
                     setTimeout(() => {
+
                         topBar.style.display = "none";
+
                     }, 500);
                 }
             }
 
-            urlBtn.addEventListener("click", changeUrl);
-            urlInput.addEventListener("keydown", (e) => {
-                if (e.key === "Enter") changeUrl();
-            });
 
-            const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-            const ws = new WebSocket(protocol + "//" + window.location.host);
-            const messages = document.getElementById("messages");
-            const chatInput = document.getElementById("chat-input");
-            const sendBtn = document.getElementById("send-btn");
+            urlBtn.addEventListener(
+                "click",
+                changeUrl
+            );
+
+
+            urlInput.addEventListener(
+                "keydown",
+                (e) => {
+
+                    if (e.key === "Enter") {
+                        changeUrl();
+                    }
+
+                }
+            );
+
+
+            const protocol =
+                window.location.protocol === "https:"
+                    ? "wss:"
+                    : "ws:";
+
+
+            const ws =
+                new WebSocket(
+                    protocol +
+                    "//" +
+                    window.location.host
+                );
+
+
+            const messages =
+                document.getElementById("messages");
+
+            const chatInput =
+                document.getElementById("chat-input");
+
+            const sendBtn =
+                document.getElementById("send-btn");
+
 
             function formatTimestamp(timestamp) {
-                if (!timestamp) return "";
 
-                const date = new Date(timestamp);
-                if (isNaN(date.getTime())) return "";
+                if (!timestamp) {
+                    return "";
+                }
 
-                return new Intl.DateTimeFormat("ja-JP", {
-                    timeZone: "Asia/Tokyo",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit"
-                }).format(date);
+                const date =
+                    new Date(timestamp);
+
+                if (isNaN(date.getTime())) {
+                    return "";
+                }
+
+                return new Intl.DateTimeFormat(
+                    "ja-JP",
+                    {
+                        timeZone: "Asia/Tokyo",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit"
+                    }
+                ).format(date);
             }
 
+
             ws.onmessage = (e) => {
-                const data = JSON.parse(e.data);
 
-                const li = document.createElement("li");
+                const data =
+                    JSON.parse(e.data);
 
-                const sender = document.createElement("span");
+                const li =
+                    document.createElement("li");
+
+
+                const sender =
+                    document.createElement("span");
+
                 sender.className = "sender";
-                sender.textContent = "[" + (data.senderId || "ゲスト") + "]";
+
+                sender.textContent =
+                    "[" +
+                    (data.senderId || "ゲスト") +
+                    "]";
 
                 li.appendChild(sender);
 
+
                 if (data.timestamp) {
-                    const timestamp = document.createElement("span");
-                    timestamp.className = "timestamp";
-                    timestamp.textContent = formatTimestamp(data.timestamp);
+
+                    const timestamp =
+                        document.createElement("span");
+
+                    timestamp.className =
+                        "timestamp";
+
+                    timestamp.textContent =
+                        formatTimestamp(
+                            data.timestamp
+                        );
+
                     li.appendChild(timestamp);
                 }
 
-                const text = document.createTextNode(data.text || "");
+
+                const text =
+                    document.createTextNode(
+                        data.text || ""
+                    );
+
                 li.appendChild(text);
+
 
                 messages.appendChild(li);
 
+
                 if (messages.children.length > 30) {
-                    messages.removeChild(messages.firstChild);
+
+                    messages.removeChild(
+                        messages.firstChild
+                    );
                 }
 
-                messages.scrollTop = messages.scrollHeight;
+
+                messages.scrollTop =
+                    messages.scrollHeight;
             };
 
-            function sendMessage() {
-                const text = chatInput.value.trim();
-                let name = nameInput.value.trim();
 
-                if (name === "") name = "ゲスト";
+            function sendMessage() {
+
+                const text =
+                    chatInput.value.trim();
+
+                let name =
+                    nameInput.value.trim();
+
+
+                if (name === "") {
+                    name = "ゲスト";
+                }
+
 
                 if (text !== "") {
-                    ws.send(JSON.stringify({
-                        text: text,
-                        name: name
-                    }));
+
+                    ws.send(
+                        JSON.stringify({
+                            text: text,
+                            name: name
+                        })
+                    );
 
                     chatInput.value = "";
                 }
             }
 
-            sendBtn.addEventListener("click", sendMessage);
 
-            chatInput.addEventListener("keydown", (e) => {
-                if (e.key === "Enter" && !e.isComposing) sendMessage();
-            });
+            sendBtn.addEventListener(
+                "click",
+                sendMessage
+            );
 
-            window.addEventListener("keydown", (e) => {
-                if (
-                    document.activeElement === chatInput ||
-                    document.activeElement === urlInput ||
-                    document.activeElement === nameInput
-                ) return;
 
-                if (e.key === "/") {
-                    e.preventDefault();
-                    chatInput.focus();
+            chatInput.addEventListener(
+                "keydown",
+                (e) => {
+
+                    if (
+                        e.key === "Enter" &&
+                        !e.isComposing
+                    ) {
+                        sendMessage();
+                    }
+
                 }
-            });
+            );
+
+
+            window.addEventListener(
+                "keydown",
+                (e) => {
+
+                    if (
+                        document.activeElement === chatInput ||
+                        document.activeElement === urlInput ||
+                        document.activeElement === nameInput
+                    ) {
+                        return;
+                    }
+
+
+                    if (e.key === "/") {
+
+                        e.preventDefault();
+
+                        chatInput.focus();
+                    }
+
+                }
+            );
+
         </script>
+
     </body>
     </html>
   `);
 });
 
-const server = app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
 
-const wss = new WebSocketServer({ server });
+// ========================================
+// HTTPサーバー起動
+// ========================================
+
+const server = app.listen(
+    port,
+    () => {
+        console.log(
+            `Server running on port ${port}`
+        );
+    }
+);
+
+
+// ========================================
+// WebSocket
+// ========================================
+
+const wss =
+    new WebSocketServer({
+        server
+    });
+
+
+// メモリ上のチャット履歴
 const chatHistory = [];
+
+
+// ========================================
+// WebSocket接続
+// ========================================
 
 wss.on('connection', async (ws) => {
 
-  // 起動時にGASから最新30件を読み込む
-  try {
-    if (chatHistory.length === 0) {
-      const res = await fetch(`${GAS_DEPLOY_URL}?action=read`);
+    const connectionStart =
+        Date.now();
 
-      if (res.ok) {
-        const data = await res.json();
+    console.log(
+        `[HISTORY] WebSocket接続開始`
+    );
 
-        if (data && Array.isArray(data)) {
-          data.forEach(msg => {
-            chatHistory.push({
-              text: msg.text,
-              senderId: msg.sender_id,
-              timestamp: msg.timestamp || null
-            });
-          });
-        }
-      }
-    }
-  } catch (err) {
-    console.error("Googleスプレッドシート初期読み込みエラー:", err);
-  }
+    console.log(
+        `[HISTORY] 現在のchatHistory件数: ${chatHistory.length}`
+    );
 
-  // 画面にログを高速復元
-  for (const msgData of chatHistory) {
-    ws.send(JSON.stringify(msgData));
-  }
 
-  ws.on('message', async (message) => {
+    // ====================================
+    // GASから履歴取得
+    // ====================================
+
     try {
-      const clientData = JSON.parse(message.toString());
 
-      if (clientData.text && clientData.text.trim() !== "") {
+        if (chatHistory.length === 0) {
 
-        // ★ ここでサーバー側がタイムスタンプを1回だけ生成
-        const msgData = {
-          text: clientData.text,
-          senderId: clientData.name || "ゲスト",
-          timestamp: new Date().toISOString()
-        };
+            console.log(
+                `[HISTORY] chatHistoryが空`
+            );
 
-        // メモリ配列への保存と画面中継
-        chatHistory.push(msgData);
+            console.log(
+                `[HISTORY] GAS fetch開始`
+            );
 
-        if (chatHistory.length > 30) {
-          chatHistory.shift();
+
+            const fetchStart =
+                Date.now();
+
+
+            const res =
+                await fetch(
+                    `${GAS_DEPLOY_URL}?action=read`
+                );
+
+
+            const fetchEnd =
+                Date.now();
+
+
+            console.log(
+                `[HISTORY] GAS fetch完了: ${fetchEnd - fetchStart}ms`
+            );
+
+            console.log(
+                `[HISTORY] HTTPステータス: ${res.status}`
+            );
+
+            console.log(
+                `[HISTORY] res.ok: ${res.ok}`
+            );
+
+
+            if (res.ok) {
+
+                console.log(
+                    `[HISTORY] res.json()開始`
+                );
+
+
+                const jsonStart =
+                    Date.now();
+
+
+                const data =
+                    await res.json();
+
+
+                const jsonEnd =
+                    Date.now();
+
+
+                console.log(
+                    `[HISTORY] res.json()完了: ${jsonEnd - jsonStart}ms`
+                );
+
+
+                console.log(
+                    `[HISTORY] GASから受信した件数: ${
+                        Array.isArray(data)
+                            ? data.length
+                            : "配列ではない"
+                    }`
+                );
+
+
+                if (
+                    data &&
+                    Array.isArray(data)
+                ) {
+
+                    console.log(
+                        `[HISTORY] chatHistoryへの格納開始`
+                    );
+
+
+                    const historyStart =
+                        Date.now();
+
+
+                    data.forEach(msg => {
+
+                        chatHistory.push({
+
+                            text:
+                                msg.text,
+
+                            senderId:
+                                msg.sender_id,
+
+                            timestamp:
+                                msg.timestamp || null
+                        });
+
+                    });
+
+
+                    const historyEnd =
+                        Date.now();
+
+
+                    console.log(
+                        `[HISTORY] chatHistoryへの格納完了: ${
+                            historyEnd - historyStart
+                        }ms`
+                    );
+
+
+                    console.log(
+                        `[HISTORY] 現在のchatHistory件数: ${
+                            chatHistory.length
+                        }`
+                    );
+                }
+
+            } else {
+
+                console.error(
+                    `[HISTORY] GAS HTTPエラー: ${res.status}`
+                );
+
+            }
+
+        } else {
+
+            console.log(
+                `[HISTORY] chatHistoryに既に履歴あり。GAS取得をスキップ`
+            );
+
         }
-
-        wss.clients.forEach((client) => {
-          if (client.readyState === 1) {
-            client.send(JSON.stringify(msgData));
-          }
-        });
-
-        // GASへ保存
-        fetch(GAS_DEPLOY_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            action: 'write',
-            text: msgData.text,
-            sender_id: msgData.senderId,
-            timestamp: msgData.timestamp
-          })
-        }).catch(err => {
-          console.error("スプレッドシートへの保存に失敗しました:", err);
-        });
-      }
 
     } catch (err) {
-      console.log("JSON parse error", err);
+
+        console.error(
+            `[HISTORY] Googleスプレッドシート初期読み込みエラー:`,
+            err
+        );
+
     }
-  });
+
+
+    // ====================================
+    // ブラウザへ履歴送信
+    // ====================================
+
+    console.log(
+        `[HISTORY] ブラウザへの履歴送信開始`
+    );
+
+    console.log(
+        `[HISTORY] 送信件数: ${chatHistory.length}`
+    );
+
+
+    const sendStart =
+        Date.now();
+
+
+    let sendCount = 0;
+
+
+    for (const msgData of chatHistory) {
+
+        try {
+
+            ws.send(
+                JSON.stringify(msgData)
+            );
+
+            sendCount++;
+
+        } catch (err) {
+
+            console.error(
+                `[HISTORY] 履歴送信エラー:`,
+                err
+            );
+
+            break;
+        }
+    }
+
+
+    const sendEnd =
+        Date.now();
+
+
+    console.log(
+        `[HISTORY] ブラウザへの履歴送信完了: ${
+            sendEnd - sendStart
+        }ms`
+    );
+
+    console.log(
+        `[HISTORY] 実際の送信件数: ${sendCount}`
+    );
+
+
+    const connectionEnd =
+        Date.now();
+
+
+    console.log(
+        `[HISTORY] WebSocket接続処理全体: ${
+            connectionEnd - connectionStart
+        }ms`
+    );
+
+
+    // ====================================
+    // 新規メッセージ
+    // ====================================
+
+    ws.on('message', async (message) => {
+
+        try {
+
+            const clientData =
+                JSON.parse(
+                    message.toString()
+                );
+
+
+            if (
+                clientData.text &&
+                clientData.text.trim() !== ""
+            ) {
+
+                // サーバー側でタイムスタンプ生成
+                const msgData = {
+
+                    text:
+                        clientData.text,
+
+                    senderId:
+                        clientData.name ||
+                        "ゲスト",
+
+                    timestamp:
+                        new Date().toISOString()
+                };
+
+
+                // メモリへ保存
+                chatHistory.push(
+                    msgData
+                );
+
+
+                if (
+                    chatHistory.length > 30
+                ) {
+
+                    chatHistory.shift();
+                }
+
+
+                // 全クライアントへ送信
+                wss.clients.forEach(
+                    (client) => {
+
+                        if (
+                            client.readyState === 1
+                        ) {
+
+                            client.send(
+                                JSON.stringify(
+                                    msgData
+                                )
+                            );
+                        }
+
+                    }
+                );
+
+
+                // GASへ保存
+                fetch(
+                    GAS_DEPLOY_URL,
+                    {
+                        method: 'POST',
+
+                        headers: {
+                            'Content-Type':
+                                'application/json'
+                        },
+
+                        body:
+                            JSON.stringify({
+                                action: 'write',
+
+                                text:
+                                    msgData.text,
+
+                                sender_id:
+                                    msgData.senderId,
+
+                                timestamp:
+                                    msgData.timestamp
+                            })
+                    }
+                ).catch(err => {
+
+                    console.error(
+                        "スプレッドシートへの保存に失敗しました:",
+                        err
+                    );
+
+                });
+
+            }
+
+        } catch (err) {
+
+            console.log(
+                "JSON parse error",
+                err
+            );
+
+        }
+
+    });
+
 });
+```
