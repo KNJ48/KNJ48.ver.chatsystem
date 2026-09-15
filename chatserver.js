@@ -1,353 +1,1057 @@
-```js
-// chatserver.js (Render用・Googleスプレッドシート永久保存・タイムスタンプ追加版)
+// chatserver.js
+// Render 用
+// WebSocketチャット + Google Spreadsheet永久保存
+// タイムスタンプはRender側で1回だけ生成
+
 const express = require('express');
-const { WebSocketServer } = require('ws');
+const { WebSocketServer, WebSocket } = require('ws');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// スプレッドシートIDとGASのURL
-const SPREADSHEET_ID = '1SWn4ibOxdjZlGj-iefxHwvEOH0eS4Q9FCN_s7R-jg7I';
-const GAS_DEPLOY_URL = 'https://script.google.com/macros/s/AKfycbz21K8Je-hOVyg6kJ0xcEJtFKvV23gEVTveX3qWwl5JQXlG9vQsvRqmVgbAPqxDcrXDAQ/exec';
 
-// 通常アクセス時は本家画面を返す
+// ============================================================
+// 設定
+// ============================================================
+
+const SPREADSHEET_ID =
+  '1SWn4ibOxdjZlGj-iefxHwvEOH0eS4Q9FCN_s7R-jg7I';
+
+// GASの「ウェブアプリ」デプロイURL
+// ※ 必ずGASのデプロイ画面から /exec URLを直接コピーしてください
+const GAS_DEPLOY_URL =
+  'https://script.google.com/macros/s/AKfycbz21K8JehOVyg6kJ0xcEJtFKvV23gEVTveX3qWwl5JQXlG9vQsvRqmVgbAPqxDcrXDAQ/exec';
+
+
+// ============================================================
+// HTML
+// ============================================================
+
 app.get('/', (req, res) => {
   res.send(`
-    <!DOCTYPE html>
-    <html lang="ja">
-    <head>
-        <meta charset="UTF-8"><title>カスタムチャットシステム Pro</title>
-        <style>
-            body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: sans-serif; background-color: #111; color: #fff; }
-            #game-area { width: 100%; height: 100%; border: none; position: absolute; top: 0; left: 0; z-index: 1; }
-            #top-bar-container { position: absolute; top: 15px; left: 15px; z-index: 10; display: flex; gap: 10px; background: rgba(0,0,0,0.6); padding: 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 4px 10px rgba(0,0,0,0.4); transition: opacity 0.5s ease, transform 0.5s ease; }
-            .bar-group { display: flex; gap: 4px; align-items: center; }
-            .bar-label { color: #ccc; font-size: 11px; font-weight: bold; }
-            #url-input { width: 220px; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; color: #fff; padding: 4px 8px; font-size: 12px; outline: none; }
-            #url-btn { background: #2196F3; color: white; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px; }
-            #name-input { width: 100px; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; color: #ffca28; padding: 4px 8px; font-size: 12px; outline: none; font-weight: bold; }
-            #chat-container { position: absolute; right: 30px; bottom: 30px; width: 320px; height: 240px; background: rgba(0, 0, 0, 0.6); border-radius: 6px; display: flex; flex-direction: column; z-index: 20; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5); pointer-events: auto; border: 1px solid rgba(255, 255, 255, 0.1); }
-            #messages { flex: 1; overflow-y: auto; padding: 10px; margin: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
-            #messages li { color: #fff; font-size: 13px; line-height: 1.4; word-break: break-all; background: rgba(255, 255, 255, 0.08); padding: 6px 10px; border-radius: 4px; }
-            #messages li span.sender { font-weight: bold; color: #ffca28; margin-right: 6px; }
-            #messages li span.timestamp { color: #aaa; font-size: 10px; margin-left: 6px; }
-            #input-area { display: flex; padding: 8px; background: rgba(0, 0, 0, 0.4); border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; border-top: 1px solid rgba(255, 255, 255, 0.1); }
-            #chat-input { flex: 1; background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 4px; color: #fff; padding: 6px 10px; font-size: 13px; outline: none; }
-            #send-btn { background: #4caf50; color: white; border: none; padding: 6px 14px; margin-left: 8px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
-        </style>
-    </head>
-    <body>
-        <div id="top-bar-container">
-            <div class="bar-group"><span class="bar-label">URL:</span><input type="text" id="url-input" value="https://example.com"><button id="url-btn">移動</button></div>
-            <div class="bar-group" style="margin-left: 5px; border-left: 1px solid rgba(255,255,255,0.2); padding-left: 10px;"><span class="bar-label">NAME:</span><input type="text" id="name-input" value="ゲスト" maxlength="10"></div>
-        </div>
-        <iframe id="game-area" src="https://example.com"></iframe>
-        <div id="chat-container"><ul id="messages"></ul><div id="input-area"><input type="text" id="chat-input" placeholder="チャットを開始..." autocomplete="off"><button id="send-btn">送信</button></div></div>
+<!DOCTYPE html>
+<html lang="ja">
 
-        <script>
-            const gameArea = document.getElementById("game-area");
-            const urlInput = document.getElementById("url-input");
-            const urlBtn = document.getElementById("url-btn");
-            const nameInput = document.getElementById("name-input");
-            const topBar = document.getElementById("top-bar-container");
+<head>
+  <meta charset="UTF-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
 
-            function changeUrl() {
-                let url = urlInput.value.trim();
-                if (url !== "") {
-                    if (url.indexOf("http://") !== 0 && url.indexOf("https://") !== 0) {
-                        url = "https://" + url;
-                        urlInput.value = url;
-                    }
-                    gameArea.src = url;
-                    topBar.style.opacity = "0";
-                    topBar.style.transform = "translateY(-20px)";
-                    setTimeout(() => {
-                        topBar.style.display = "none";
-                    }, 500);
-                }
-            }
+  <title>カスタムチャットシステム Pro</title>
 
-            urlBtn.addEventListener("click", changeUrl);
+  <style>
+    body,
+    html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: sans-serif;
+      background-color: #111;
+      color: #fff;
+    }
 
-            urlInput.addEventListener("keydown", (e) => {
-                if (e.key === "Enter") changeUrl();
-            });
+    #game-area {
+      width: 100%;
+      height: 100%;
+      border: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+    }
 
-            const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-            const ws = new WebSocket(protocol + "//" + window.location.host);
-            const messages = document.getElementById("messages");
-            const chatInput = document.getElementById("chat-input");
-            const sendBtn = document.getElementById("send-btn");
+    #top-bar-container {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      z-index: 10;
+      display: flex;
+      gap: 10px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+      transition:
+        opacity 0.5s ease,
+        transform 0.5s ease;
+    }
 
-            function formatTimestamp(timestamp) {
-                if (!timestamp) return "";
+    .bar-group {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
 
-                const date = new Date(timestamp);
+    .bar-label {
+      color: #ccc;
+      font-size: 11px;
+      font-weight: bold;
+    }
 
-                if (isNaN(date.getTime())) return "";
+    #url-input {
+      width: 220px;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      color: #fff;
+      padding: 4px 8px;
+      font-size: 12px;
+      outline: none;
+    }
 
-                return new Intl.DateTimeFormat("ja-JP", {
-                    timeZone: "Asia/Tokyo",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit"
-                }).format(date);
-            }
+    #url-btn {
+      background: #2196F3;
+      color: white;
+      border: none;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 12px;
+    }
 
-            ws.onmessage = (e) => {
-                const data = JSON.parse(e.data);
+    #name-input {
+      width: 100px;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      color: #ffca28;
+      padding: 4px 8px;
+      font-size: 12px;
+      outline: none;
+      font-weight: bold;
+    }
 
-                const li = document.createElement("li");
+    #chat-container {
+      position: absolute;
+      right: 30px;
+      bottom: 30px;
+      width: 320px;
+      height: 240px;
+      background: rgba(0, 0, 0, 0.6);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      z-index: 20;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+      pointer-events: auto;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
 
-                const sender = document.createElement("span");
-                sender.className = "sender";
-                sender.textContent = "[" + (data.senderId || "ゲスト") + "]";
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+      margin: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
 
-                li.appendChild(sender);
+    #messages li {
+      color: #fff;
+      font-size: 13px;
+      line-height: 1.4;
+      word-break: break-all;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 6px 10px;
+      border-radius: 4px;
+    }
 
-                if (data.timestamp) {
-                    const timestamp = document.createElement("span");
-                    timestamp.className = "timestamp";
-                    timestamp.textContent = formatTimestamp(data.timestamp);
-                    li.appendChild(timestamp);
-                }
+    #messages li span.sender {
+      font-weight: bold;
+      color: #ffca28;
+      margin-right: 6px;
+    }
 
-                const text = document.createTextNode(data.text || "");
-                li.appendChild(text);
+    #messages li span.timestamp {
+      color: #aaa;
+      font-size: 10px;
+      margin-left: 6px;
+      margin-right: 6px;
+    }
 
-                messages.appendChild(li);
+    #input-area {
+      display: flex;
+      padding: 8px;
+      background: rgba(0, 0, 0, 0.4);
+      border-bottom-left-radius: 6px;
+      border-bottom-right-radius: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
 
-                if (messages.children.length > 30) {
-                    messages.removeChild(messages.firstChild);
-                }
+    #chat-input {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      color: #fff;
+      padding: 6px 10px;
+      font-size: 13px;
+      outline: none;
+    }
 
-                messages.scrollTop = messages.scrollHeight;
-            };
+    #send-btn {
+      background: #4caf50;
+      color: white;
+      border: none;
+      padding: 6px 14px;
+      margin-left: 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 13px;
+    }
+  </style>
+</head>
 
-            function sendMessage() {
-                const text = chatInput.value.trim();
-                let name = nameInput.value.trim();
+<body>
 
-                if (name === "") name = "ゲスト";
+  <div id="top-bar-container">
 
-                if (text !== "") {
-                    ws.send(JSON.stringify({
-                        text: text,
-                        name: name
-                    }));
+    <div class="bar-group">
+      <span class="bar-label">URL:</span>
 
-                    chatInput.value = "";
-                }
-            }
+      <input
+        type="text"
+        id="url-input"
+        value="https://example.com"
+      >
 
-            sendBtn.addEventListener("click", sendMessage);
+      <button id="url-btn">
+        移動
+      </button>
+    </div>
 
-            chatInput.addEventListener("keydown", (e) => {
-                if (e.key === "Enter" && !e.isComposing) sendMessage();
-            });
+    <div
+      class="bar-group"
+      style="
+        margin-left: 5px;
+        border-left: 1px solid rgba(255,255,255,0.2);
+        padding-left: 10px;
+      "
+    >
+      <span class="bar-label">
+        NAME:
+      </span>
 
-            window.addEventListener("keydown", (e) => {
-                if (
-                    document.activeElement === chatInput ||
-                    document.activeElement === urlInput ||
-                    document.activeElement === nameInput
-                ) return;
+      <input
+        type="text"
+        id="name-input"
+        value="ゲスト"
+        maxlength="10"
+      >
+    </div>
 
-                if (e.key === "/") {
-                    e.preventDefault();
-                    chatInput.focus();
-                }
-            });
-        </script>
-    </body>
-    </html>
+  </div>
+
+
+  <iframe
+    id="game-area"
+    src="https://example.com"
+  ></iframe>
+
+
+  <div id="chat-container">
+
+    <ul id="messages"></ul>
+
+    <div id="input-area">
+
+      <input
+        type="text"
+        id="chat-input"
+        placeholder="チャットを開始..."
+        autocomplete="off"
+      >
+
+      <button id="send-btn">
+        送信
+      </button>
+
+    </div>
+
+  </div>
+
+
+  <script>
+    // ========================================================
+    // iframe URL変更
+    // ========================================================
+
+    const gameArea =
+      document.getElementById("game-area");
+
+    const urlInput =
+      document.getElementById("url-input");
+
+    const urlBtn =
+      document.getElementById("url-btn");
+
+    const nameInput =
+      document.getElementById("name-input");
+
+    const topBar =
+      document.getElementById("top-bar-container");
+
+
+    function changeUrl() {
+      let url = urlInput.value.trim();
+
+      if (url === "") {
+        return;
+      }
+
+      if (
+        !url.startsWith("http://") &&
+        !url.startsWith("https://")
+      ) {
+        url = "https://" + url;
+        urlInput.value = url;
+      }
+
+      gameArea.src = url;
+
+      topBar.style.opacity = "0";
+      topBar.style.transform =
+        "translateY(-20px)";
+
+      setTimeout(() => {
+        topBar.style.display = "none";
+      }, 500);
+    }
+
+
+    urlBtn.addEventListener(
+      "click",
+      changeUrl
+    );
+
+
+    urlInput.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.key === "Enter") {
+          changeUrl();
+        }
+      }
+    );
+
+
+    // ========================================================
+    // WebSocket
+    // ========================================================
+
+    const protocol =
+      window.location.protocol === "https:"
+        ? "wss:"
+        : "ws:";
+
+    const ws = new WebSocket(
+      protocol + "//" + window.location.host
+    );
+
+
+    const messages =
+      document.getElementById("messages");
+
+    const chatInput =
+      document.getElementById("chat-input");
+
+    const sendBtn =
+      document.getElementById("send-btn");
+
+
+    // ========================================================
+    // タイムスタンプ表示
+    // ========================================================
+
+    function formatTimestamp(timestamp) {
+
+      if (!timestamp) {
+        return "";
+      }
+
+      const date = new Date(timestamp);
+
+      if (isNaN(date.getTime())) {
+        return "";
+      }
+
+      return new Intl.DateTimeFormat(
+        "ja-JP",
+        {
+          timeZone: "Asia/Tokyo",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false
+        }
+      ).format(date);
+    }
+
+
+    // ========================================================
+    // メッセージ受信
+    // ========================================================
+
+    ws.onmessage = (e) => {
+
+      try {
+
+        const data =
+          JSON.parse(e.data);
+
+        const li =
+          document.createElement("li");
+
+
+        // 送信者
+        const sender =
+          document.createElement("span");
+
+        sender.className =
+          "sender";
+
+        sender.textContent =
+          "[" +
+          (data.senderId || "ゲスト") +
+          "]";
+
+        li.appendChild(sender);
+
+
+        // タイムスタンプ
+        if (data.timestamp) {
+
+          const timestamp =
+            document.createElement("span");
+
+          timestamp.className =
+            "timestamp";
+
+          timestamp.textContent =
+            formatTimestamp(
+              data.timestamp
+            );
+
+          li.appendChild(timestamp);
+        }
+
+
+        // 本文
+        const text =
+          document.createTextNode(
+            data.text || ""
+          );
+
+        li.appendChild(text);
+
+
+        messages.appendChild(li);
+
+
+        // 表示は最大30件
+        while (
+          messages.children.length > 30
+        ) {
+          messages.removeChild(
+            messages.firstChild
+          );
+        }
+
+
+        messages.scrollTop =
+          messages.scrollHeight;
+
+      } catch (err) {
+
+        console.error(
+          "メッセージ受信エラー:",
+          err
+        );
+      }
+    };
+
+
+    ws.onerror = (err) => {
+      console.error(
+        "WebSocket error:",
+        err
+      );
+    };
+
+
+    // ========================================================
+    // メッセージ送信
+    // ========================================================
+
+    function sendMessage() {
+
+      const text =
+        chatInput.value.trim();
+
+      let name =
+        nameInput.value.trim();
+
+
+      if (name === "") {
+        name = "ゲスト";
+      }
+
+
+      if (text === "") {
+        return;
+      }
+
+
+      if (
+        ws.readyState !== WebSocket.OPEN
+      ) {
+        console.error(
+          "WebSocketが接続されていません"
+        );
+
+        return;
+      }
+
+
+      ws.send(
+        JSON.stringify({
+          text: text,
+          name: name
+        })
+      );
+
+
+      chatInput.value = "";
+    }
+
+
+    sendBtn.addEventListener(
+      "click",
+      sendMessage
+    );
+
+
+    chatInput.addEventListener(
+      "keydown",
+      (e) => {
+
+        if (
+          e.key === "Enter" &&
+          !e.isComposing
+        ) {
+          sendMessage();
+        }
+      }
+    );
+
+
+    // ========================================================
+    // "/" キーでチャット入力
+    // ========================================================
+
+    window.addEventListener(
+      "keydown",
+      (e) => {
+
+        if (
+          document.activeElement === chatInput ||
+          document.activeElement === urlInput ||
+          document.activeElement === nameInput
+        ) {
+          return;
+        }
+
+
+        if (e.key === "/") {
+
+          e.preventDefault();
+
+          chatInput.focus();
+        }
+      }
+    );
+  </script>
+
+</body>
+</html>
   `);
 });
 
-const server = app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
 
-const wss = new WebSocketServer({ server });
+// ============================================================
+// HTTP Server
+// ============================================================
+
+const server = app.listen(
+  port,
+  () => {
+    console.log(
+      \`Server running on port \${port}\`
+    );
+  }
+);
+
+
+// ============================================================
+// WebSocket Server
+// ============================================================
+
+const wss =
+  new WebSocketServer({
+    server
+  });
+
+
+// メモリ上は最新30件だけ保持
 const chatHistory = [];
 
-// GAS履歴読み込みの重複実行を防ぐためのPromise
+
+// GAS履歴を複数接続から同時ロードしないためのPromise
 let historyLoadPromise = null;
 
-async function loadChatHistory() {
+
+// ============================================================
+// GASから履歴取得
+// ============================================================
+
+async function loadHistoryFromGAS() {
+
   if (chatHistory.length > 0) {
-    console.log(`[HISTORY] 既に履歴あり: ${chatHistory.length}件`);
     return;
   }
+
 
   if (historyLoadPromise) {
-    console.log('[HISTORY] 他の接続が読み込み中なので待機します');
-    await historyLoadPromise;
-    return;
+    return historyLoadPromise;
   }
 
-  historyLoadPromise = (async () => {
-    const startTime = Date.now();
 
-    try {
-      console.log('[HISTORY] GAS取得開始');
-
-      const controller = new AbortController();
-
-      const timeout = setTimeout(() => {
-        console.log('[HISTORY] GAS取得が15秒を超えたため中止します');
-        controller.abort();
-      }, 15000);
-
-      let res;
+  historyLoadPromise =
+    (async () => {
 
       try {
-        res = await fetch(`${GAS_DEPLOY_URL}?action=read`, {
-          signal: controller.signal
-        });
-      } finally {
-        clearTimeout(timeout);
-      }
 
-      console.log(
-        `[HISTORY] GAS fetch完了: ${Date.now() - startTime}ms / HTTP ${res.status}`
-      );
+        console.log(
+          "GASからチャット履歴を読み込みます"
+        );
 
-      if (!res.ok) {
-        console.error(`[HISTORY] GAS HTTPエラー: ${res.status}`);
-        return;
-      }
 
-      const jsonStart = Date.now();
+        const res = await fetch(
+          GAS_DEPLOY_URL +
+          "?action=read"
+        );
 
-      console.log('[HISTORY] JSON解析開始');
 
-      const data = await res.json();
+        const responseText =
+          await res.text();
 
-      console.log(
-        `[HISTORY] JSON解析完了: ${Date.now() - jsonStart}ms`
-      );
 
-      if (!Array.isArray(data)) {
-        console.error('[HISTORY] GASから配列ではないデータが返りました');
-        return;
-      }
+        if (!res.ok) {
 
-      console.log(`[HISTORY] GASから${data.length}件取得`);
+          throw new Error(
+            "GAS HTTP " +
+            res.status +
+            ": " +
+            responseText
+          );
+        }
 
-      const pushStart = Date.now();
 
-      for (const msg of data) {
-        chatHistory.push({
-          text: msg.text,
-          senderId: msg.sender_id,
-          timestamp: msg.timestamp || null
-        });
-      }
+        let data;
 
-      if (chatHistory.length > 30) {
-        chatHistory.splice(0, chatHistory.length - 30);
-      }
+        try {
 
-      console.log(
-        `[HISTORY] chatHistory保存完了: ${Date.now() - pushStart}ms / ${chatHistory.length}件`
-      );
+          data =
+            JSON.parse(
+              responseText
+            );
 
-      console.log(
-        `[HISTORY] 履歴読み込み全体完了: ${Date.now() - startTime}ms`
-      );
+        } catch (err) {
 
-    } catch (err) {
-      if (err && err.name === 'AbortError') {
-        console.error('[HISTORY] GAS取得が15秒でタイムアウトしました');
-      } else {
-        console.error('[HISTORY] 履歴取得エラー:', err);
-      }
-    } finally {
-      historyLoadPromise = null;
-    }
-  })();
+          throw new Error(
+            "GASからJSON以外のレスポンス: " +
+            responseText
+          );
+        }
 
-  await historyLoadPromise;
-}
 
-wss.on('connection', async (ws) => {
-  const connectionStart = Date.now();
+        if (!Array.isArray(data)) {
 
-  console.log('[HISTORY] WebSocket接続開始');
+          throw new Error(
+            "GAS履歴レスポンスが配列ではありません: " +
+            responseText
+          );
+        }
 
-  try {
-    await loadChatHistory();
-  } catch (err) {
-    console.error('[HISTORY] loadChatHistoryエラー:', err);
-  }
 
-  console.log(
-    `[HISTORY] ブラウザへの履歴送信開始: ${chatHistory.length}件`
-  );
+        chatHistory.length = 0;
 
-  let sentCount = 0;
 
-  for (const msgData of chatHistory) {
-    if (ws.readyState === 1) {
-      ws.send(JSON.stringify(msgData));
-      sentCount++;
-    } else {
-      console.log('[HISTORY] WebSocketが閉じられたため送信中止');
-      break;
-    }
-  }
+        for (const msg of data) {
 
-  console.log(
-    `[HISTORY] ブラウザへの履歴送信完了: ${sentCount}件 / ${Date.now() - connectionStart}ms`
-  );
+          if (!msg) {
+            continue;
+          }
 
-  ws.on('message', async (message) => {
-    try {
-      const clientData = JSON.parse(message.toString());
 
-      if (clientData.text && clientData.text.trim() !== "") {
+          chatHistory.push({
+            text:
+              String(
+                msg.text || ""
+              ),
 
-        // サーバー側がタイムスタンプを1回だけ生成
-        const msgData = {
-          text: clientData.text,
-          senderId: clientData.name || "ゲスト",
-          timestamp: new Date().toISOString()
-        };
+            senderId:
+              String(
+                msg.sender_id ||
+                "ゲスト"
+              ),
 
-        // メモリ配列への保存と画面中継
-        chatHistory.push(msgData);
+            timestamp:
+              msg.timestamp || null
+          });
+        }
 
-        if (chatHistory.length > 30) {
+
+        // 念のため30件を超えた分を削除
+        while (
+          chatHistory.length > 30
+        ) {
           chatHistory.shift();
         }
 
-        wss.clients.forEach((client) => {
-          if (client.readyState === 1) {
-            client.send(JSON.stringify(msgData));
-          }
-        });
 
-        // GASへ保存
-        fetch(GAS_DEPLOY_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            action: 'write',
-            text: msgData.text,
-            sender_id: msgData.senderId,
-            timestamp: msgData.timestamp
-          })
-        }).catch(err => {
-          console.error("スプレッドシートへの保存に失敗しました:", err);
-        });
+        console.log(
+          "GAS履歴読み込み成功:",
+          chatHistory.length,
+          "件"
+        );
+
+      } catch (err) {
+
+        console.error(
+          "Google スプレッドシート初期読み込みエラー:",
+          err
+        );
+
+      } finally {
+
+        historyLoadPromise = null;
       }
+    })();
+
+
+  return historyLoadPromise;
+}
+
+
+// ============================================================
+// GASへメッセージ保存
+// ============================================================
+
+async function saveMessageToGAS(
+  msgData
+) {
+
+  try {
+
+    const payload = {
+      action: "write",
+
+      text:
+        msgData.text,
+
+      sender_id:
+        msgData.senderId,
+
+      // ★ Renderで生成したものをそのまま送る
+      timestamp:
+        msgData.timestamp
+    };
+
+
+    console.log(
+      "GASへ保存開始:",
+      payload
+    );
+
+
+    const res = await fetch(
+      GAS_DEPLOY_URL,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify(
+            payload
+          )
+      }
+    );
+
+
+    const responseText =
+      await res.text();
+
+
+    if (!res.ok) {
+
+      throw new Error(
+        "GAS HTTP " +
+        res.status +
+        ": " +
+        responseText
+      );
+    }
+
+
+    let result;
+
+    try {
+
+      result =
+        JSON.parse(
+          responseText
+        );
 
     } catch (err) {
-      console.log("JSON parse error", err);
+
+      throw new Error(
+        "GASから不正なレスポンス: " +
+        responseText
+      );
     }
-  });
-});
-```
+
+
+    if (!result.ok) {
+
+      throw new Error(
+        result.error ||
+        "GASへの保存に失敗しました"
+      );
+    }
+
+
+    console.log(
+      "スプレッドシート保存成功:",
+      result
+    );
+
+
+    return true;
+
+  } catch (err) {
+
+    console.error(
+      "スプレッドシートへの保存に失敗しました:",
+      err
+    );
+
+
+    return false;
+  }
+}
+
+
+// ============================================================
+// WebSocket 接続
+// ============================================================
+
+wss.on(
+  "connection",
+  async (ws) => {
+
+    console.log(
+      "WebSocket client connected"
+    );
+
+
+    // ========================================================
+    // GASから最新30件を取得
+    // ========================================================
+
+    await loadHistoryFromGAS();
+
+
+    // ========================================================
+    // 接続したユーザーへ履歴送信
+    // ========================================================
+
+    for (
+      const msgData
+      of chatHistory
+    ) {
+
+      if (
+        ws.readyState ===
+        WebSocket.OPEN
+      ) {
+
+        ws.send(
+          JSON.stringify(
+            msgData
+          )
+        );
+      }
+    }
+
+
+    // ========================================================
+    // 新規メッセージ
+    // ========================================================
+
+    ws.on(
+      "message",
+      async (message) => {
+
+        try {
+
+          const clientData =
+            JSON.parse(
+              message.toString()
+            );
+
+
+          const text =
+            typeof clientData.text ===
+            "string"
+              ? clientData.text.trim()
+              : "";
+
+
+          if (text === "") {
+            return;
+          }
+
+
+          const senderId =
+            typeof clientData.name ===
+              "string" &&
+            clientData.name.trim() !== ""
+              ? clientData.name
+                  .trim()
+                  .slice(0, 10)
+              : "ゲスト";
+
+
+          // ==================================================
+          // ★ タイムスタンプはここで1回だけ生成
+          // ==================================================
+
+          const timestamp =
+            new Date().toISOString();
+
+
+          const msgData = {
+            text:
+              text,
+
+            senderId:
+              senderId,
+
+            timestamp:
+              timestamp
+          };
+
+
+          console.log(
+            "新規メッセージ:",
+            msgData
+          );
+
+
+          // ==================================================
+          // メモリ履歴へ保存
+          // ==================================================
+
+          chatHistory.push(
+            msgData
+          );
+
+
+          while (
+            chatHistory.length >
+            30
+          ) {
+
+            chatHistory.shift();
+          }
+
+
+          // ==================================================
+          // 全クライアントへ中継
+          // ==================================================
+
+          wss.clients.forEach(
+            (client) => {
+
+              if (
+                client.readyState ===
+                WebSocket.OPEN
+              ) {
+
+                client.send(
+                  JSON.stringify(
+                    msgData
+                  )
+                );
+              }
+            }
+          );
+
+
+          // ==================================================
+          // ★ 同じタイムスタンプをGASへ保存
+          // ==================================================
+
+          await saveMessageToGAS(
+            msgData
+          );
+
+
+        } catch (err) {
+
+          console.error(
+            "WebSocket message error:",
+            err
+          );
+        }
+      }
+    );
+
+
+    ws.on(
+      "close",
+      () => {
+
+        console.log(
+          "WebSocket client disconnected"
+        );
+      }
+    );
+
+
+    ws.on(
+      "error",
+      (err) => {
+
+        console.error(
+          "WebSocket client error:",
+          err
+        );
+      }
+    );
+  }
+);
