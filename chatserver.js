@@ -1,8 +1,13 @@
 // ============================================================
 // chatserver.js
 // Render + WebSocket + Google Apps Script + Spreadsheet
-// 表示時刻: 時:分
-// 保存timestamp: 秒・ミリ秒まで保持
+//
+// タイムスタンプ表示:
+//   今日       → 21:34
+//   今年の過去 → 09/22 21:34
+//   前年以前   → 2025/12/31 21:34
+//
+// 保存timestampはISO形式の正確な値を保持
 // ============================================================
 
 const express = require("express");
@@ -384,7 +389,9 @@ body {
 <body>
 
 
-<!-- TOP BAR -->
+<!-- =========================================================
+     TOP BAR
+     ========================================================= -->
 
 <div id="top-bar-container">
 
@@ -434,7 +441,9 @@ body {
 </div>
 
 
-<!-- iframe -->
+<!-- =========================================================
+     iframe
+     ========================================================= -->
 
 <iframe
   id="game-area"
@@ -442,7 +451,9 @@ body {
 ></iframe>
 
 
-<!-- CHAT -->
+<!-- =========================================================
+     CHAT
+     ========================================================= -->
 
 <div id="chat-container">
 
@@ -498,7 +509,7 @@ const sendBtn =
 
 
 // ============================================================
-// URL
+// URL変更
 // ============================================================
 
 function changeUrl() {
@@ -588,10 +599,74 @@ const ws =
 
 
 // ============================================================
-// TIME
-// 画面表示は「時:分」のみ
-// 保存されるtimestamp自体は秒・ミリ秒まで保持
+// TIMESTAMP
+//
+// 日本時間基準
+//
+// 今日:
+//   21:34
+//
+// 今年の昨日以前:
+//   09/22 21:34
+//
+// 前年以前:
+//   2025/12/31 21:34
 // ============================================================
+
+function getJapanDateParts(date) {
+
+  const parts =
+    new Intl.DateTimeFormat(
+      "en-US",
+      {
+        timeZone:
+          "Asia/Tokyo",
+
+        year:
+          "numeric",
+
+        month:
+          "2-digit",
+
+        day:
+          "2-digit",
+
+        hour:
+          "2-digit",
+
+        minute:
+          "2-digit",
+
+        hourCycle:
+          "h23"
+      }
+    ).formatToParts(date);
+
+
+  const result = {};
+
+
+  for (
+    const part
+    of parts
+  ) {
+
+    if (
+      part.type !==
+      "literal"
+    ) {
+
+      result[
+        part.type
+      ] =
+        part.value;
+    }
+  }
+
+
+  return result;
+}
+
 
 function formatTimestamp(value) {
 
@@ -605,34 +680,92 @@ function formatTimestamp(value) {
 
 
   if (
-    isNaN(date.getTime())
+    isNaN(
+      date.getTime()
+    )
   ) {
 
     return "";
   }
 
 
-  return new Intl.DateTimeFormat(
-    "ja-JP",
-    {
-      timeZone:
-        "Asia/Tokyo",
+  // 投稿時刻
+  const target =
+    getJapanDateParts(
+      date
+    );
 
-      hour:
-        "2-digit",
 
-      minute:
-        "2-digit",
+  // 現在時刻
+  const now =
+    getJapanDateParts(
+      new Date()
+    );
 
-      hour12:
-        false
-    }
-  ).format(date);
+
+  // ==========================================================
+  // 今日
+  // ==========================================================
+
+  const isToday =
+    target.year === now.year &&
+    target.month === now.month &&
+    target.day === now.day;
+
+
+  if (isToday) {
+
+    return (
+      target.hour +
+      ":" +
+      target.minute
+    );
+  }
+
+
+  // ==========================================================
+  // 今年の過去
+  // ==========================================================
+
+  const isSameYear =
+    target.year ===
+    now.year;
+
+
+  if (isSameYear) {
+
+    return (
+      target.month +
+      "/" +
+      target.day +
+      " " +
+      target.hour +
+      ":" +
+      target.minute
+    );
+  }
+
+
+  // ==========================================================
+  // 前年以前
+  // ==========================================================
+
+  return (
+    target.year +
+    "/" +
+    target.month +
+    "/" +
+    target.day +
+    " " +
+    target.hour +
+    ":" +
+    target.minute
+  );
 }
 
 
 // ============================================================
-// 受信
+// WebSocket受信
 // ============================================================
 
 ws.onmessage =
@@ -651,6 +784,10 @@ ws.onmessage =
           "li"
         );
 
+
+      // ======================================================
+      // 送信者
+      // ======================================================
 
       const sender =
         document.createElement(
@@ -673,7 +810,13 @@ ws.onmessage =
       );
 
 
-      if (data.timestamp) {
+      // ======================================================
+      // timestamp
+      // ======================================================
+
+      if (
+        data.timestamp
+      ) {
 
         const time =
           document.createElement(
@@ -697,6 +840,10 @@ ws.onmessage =
       }
 
 
+      // ======================================================
+      // 本文
+      // ======================================================
+
       const text =
         document.createTextNode(
           data.text || ""
@@ -713,6 +860,10 @@ ws.onmessage =
       );
 
 
+      // ======================================================
+      // 最大30件
+      // ======================================================
+
       while (
         messages.children.length >
         30
@@ -727,6 +878,7 @@ ws.onmessage =
       messages.scrollTop =
         messages.scrollHeight;
 
+
     } catch (error) {
 
       console.error(
@@ -736,6 +888,10 @@ ws.onmessage =
     }
   };
 
+
+// ============================================================
+// WebSocket状態
+// ============================================================
 
 ws.onopen =
   function () {
@@ -756,8 +912,17 @@ ws.onerror =
   };
 
 
+ws.onclose =
+  function () {
+
+    console.log(
+      "WebSocket closed"
+    );
+  };
+
+
 // ============================================================
-// SEND
+// メッセージ送信
 // ============================================================
 
 function sendMessage() {
@@ -778,6 +943,7 @@ function sendMessage() {
 
 
   if (!text) {
+
     return;
   }
 
@@ -811,11 +977,19 @@ function sendMessage() {
 }
 
 
+// ============================================================
+// 送信ボタン
+// ============================================================
+
 sendBtn.addEventListener(
   "click",
   sendMessage
 );
 
+
+// ============================================================
+// Enter送信
+// ============================================================
 
 chatInput.addEventListener(
   "keydown",
@@ -896,6 +1070,7 @@ const server =
       );
 
 
+      // 起動直後に履歴取得
       loadHistoryFromGAS();
     }
   );
@@ -912,7 +1087,7 @@ const wss =
 
 
 // ============================================================
-// GAS GET
+// GASから履歴取得
 // ============================================================
 
 async function loadHistoryFromGAS() {
@@ -950,9 +1125,11 @@ async function loadHistoryFromGAS() {
           "========================================"
         );
 
+
         console.log(
           "[GAS GET] 接続開始"
         );
+
 
         console.log(
           "[GAS GET] URL: " +
@@ -1022,10 +1199,12 @@ async function loadHistoryFromGAS() {
             "[GAS GET] JSONではありません"
           );
 
+
           console.error(
             "[GAS GET] RESPONSE:",
             body
           );
+
 
           throw new Error(
             "GAS response is not JSON"
@@ -1034,7 +1213,9 @@ async function loadHistoryFromGAS() {
 
 
         if (
-          !Array.isArray(data)
+          !Array.isArray(
+            data
+          )
         ) {
 
           console.error(
@@ -1042,11 +1223,16 @@ async function loadHistoryFromGAS() {
             data
           );
 
+
           throw new Error(
             "GAS response is not an array"
           );
         }
 
+
+        // ====================================================
+        // メモリ履歴を更新
+        // ====================================================
 
         chatHistory.length =
           0;
@@ -1056,6 +1242,7 @@ async function loadHistoryFromGAS() {
           function (message) {
 
             if (!message) {
+
               return;
             }
 
@@ -1084,6 +1271,10 @@ async function loadHistoryFromGAS() {
           }
         );
 
+
+        // ====================================================
+        // 念のため最大30件
+        // ====================================================
 
         while (
           chatHistory.length >
@@ -1148,7 +1339,7 @@ async function loadHistoryFromGAS() {
 
 
 // ============================================================
-// GAS POST
+// GASへ保存
 // ============================================================
 
 async function saveMessageToGAS(
@@ -1168,7 +1359,7 @@ async function saveMessageToGAS(
       sender_id:
         message.senderId,
 
-      // 保存用timestampは秒・ミリ秒を削らない
+      // 正確なISO timestampを保存
       timestamp:
         message.timestamp
     };
@@ -1321,6 +1512,10 @@ wss.on(
     );
 
 
+    // ========================================================
+    // GAS履歴がまだなら待つ
+    // ========================================================
+
     if (
       !historyLoaded
     ) {
@@ -1360,7 +1555,7 @@ wss.on(
 
 
     // ========================================================
-    // NEW MESSAGE
+    // 新規メッセージ
     // ========================================================
 
     ws.on(
@@ -1376,6 +1571,10 @@ wss.on(
               rawMessage.toString()
             );
 
+
+          // ==================================================
+          // 本文
+          // ==================================================
 
           let text =
             "";
@@ -1396,6 +1595,10 @@ wss.on(
             return;
           }
 
+
+          // ==================================================
+          // 送信者
+          // ==================================================
 
           let senderId =
             "ゲスト";
@@ -1418,7 +1621,9 @@ wss.on(
 
 
           // ==================================================
-          // timestampは正確な時刻を保持
+          // timestamp
+          //
+          // ここで一度だけ正確な時刻を生成
           // ==================================================
 
           const timestamp =
@@ -1466,7 +1671,7 @@ wss.on(
 
 
           // ==================================================
-          // 全クライアントへ送信
+          // 全クライアントへ即時送信
           // ==================================================
 
           wss.clients.forEach(
@@ -1488,7 +1693,7 @@ wss.on(
 
 
           // ==================================================
-          // GAS保存
+          // Spreadsheetへ保存
           // ==================================================
 
           await saveMessageToGAS(
@@ -1507,6 +1712,10 @@ wss.on(
     );
 
 
+    // ========================================================
+    // 切断
+    // ========================================================
+
     ws.on(
       "close",
       function () {
@@ -1517,6 +1726,10 @@ wss.on(
       }
     );
 
+
+    // ========================================================
+    // ERROR
+    // ========================================================
 
     ws.on(
       "error",
