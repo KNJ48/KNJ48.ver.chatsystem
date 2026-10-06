@@ -1,27 +1,25 @@
 // ============================================================
 // chatserver.js
-// Render + WebSocket + Google Apps Script + Spreadsheet
+// Render + WebSocket + GAS + Spreadsheet
 //
-// タイムスタンプ表示:
+// タイムスタンプ:
 //   今日       → 21:34
 //   今年の過去 → 09/22 21:34
 //   前年以前   → 2025/12/31 21:34
 //
-// チャットボックス:
-//   上端18pxをドラッグして自由に移動可能
+// チャット:
+//   上部ドラッグバーで移動可能
 // ============================================================
 
 const express = require("express");
 const { WebSocketServer, WebSocket } = require("ws");
 
 const app = express();
-
-const port =
-  process.env.PORT || 3000;
+const port = process.env.PORT || 3000;
 
 
 // ============================================================
-// GAS WEB APP URL
+// GAS
 // ============================================================
 
 const GAS_DEPLOY_URL =
@@ -29,15 +27,13 @@ const GAS_DEPLOY_URL =
 
 
 // ============================================================
-// チャット履歴
+// HISTORY
 // ============================================================
 
 const chatHistory = [];
-
 const MAX_HISTORY = 30;
 
 let historyLoaded = false;
-
 let historyLoadingPromise = null;
 
 
@@ -66,6 +62,7 @@ app.get("/", function (req, res) {
 
 html,
 body {
+
   margin: 0;
   padding: 0;
 
@@ -81,9 +78,9 @@ body {
 }
 
 
-/* ==========================================================
+/* =========================================================
    iframe
-   ========================================================== */
+   ========================================================= */
 
 #game-area {
 
@@ -101,9 +98,9 @@ body {
 }
 
 
-/* ==========================================================
+/* =========================================================
    TOP BAR
-   ========================================================== */
+   ========================================================= */
 
 #top-bar-container {
 
@@ -125,13 +122,13 @@ body {
 
   border:
     1px solid
-    rgba(255, 255, 255, 0.1);
+    rgba(255,255,255,0.1);
 
   border-radius: 6px;
 
   box-shadow:
     0 4px 10px
-    rgba(0, 0, 0, 0.4);
+    rgba(0,0,0,0.4);
 
   transition:
     opacity 0.5s ease,
@@ -143,9 +140,9 @@ body {
 
   display: flex;
 
-  align-items: center;
-
   gap: 4px;
+
+  align-items: center;
 }
 
 
@@ -165,16 +162,16 @@ body {
 
   padding: 4px 8px;
 
-  color: white;
-
   font-size: 12px;
 
+  color: #fff;
+
   background:
-    rgba(255, 255, 255, 0.15);
+    rgba(255,255,255,0.15);
 
   border:
     1px solid
-    rgba(255, 255,255,0.1);
+    rgba(255,255,255,0.1);
 
   border-radius: 4px;
 
@@ -186,19 +183,19 @@ body {
 
   padding: 4px 10px;
 
+  color: white;
+
+  background: #2196F3;
+
   border: none;
 
   border-radius: 4px;
 
-  background: #2196f3;
-
-  color: white;
-
-  font-size: 12px;
+  cursor: pointer;
 
   font-weight: bold;
 
-  cursor: pointer;
+  font-size: 12px;
 }
 
 
@@ -208,10 +205,12 @@ body {
 
   padding: 4px 8px;
 
+  font-size: 12px;
+
   color: #ffca28;
 
   background:
-    rgba(255, 255, 255, 0.15);
+    rgba(255,255,255,0.15);
 
   border:
     1px solid
@@ -221,15 +220,13 @@ body {
 
   outline: none;
 
-  font-size: 12px;
-
   font-weight: bold;
 }
 
 
-/* ==========================================================
+/* =========================================================
    CHAT
-   ========================================================== */
+   ========================================================= */
 
 #chat-container {
 
@@ -239,7 +236,7 @@ body {
   bottom: 30px;
 
   width: 320px;
-  height: 240px;
+  height: 260px;
 
   z-index: 20;
 
@@ -248,51 +245,91 @@ body {
   flex-direction: column;
 
   background:
-    rgba(0, 0, 0, 0.6);
+    rgba(0,0,0,0.6);
 
   border:
     1px solid
-    rgba(255, 255, 255, 0.1);
+    rgba(255,255,255,0.1);
 
   border-radius: 6px;
 
   box-shadow:
     0 4px 15px
-    rgba(0, 0, 0, 0.5);
+    rgba(0,0,0,0.5);
+
+  overflow: hidden;
 }
 
 
-/*
- * 上端18pxだけをドラッグ領域にする。
- * 見た目は透明なのでUIはほぼ今まで通り。
- */
-#chat-drag-area {
+/* =========================================================
+   DRAG BAR
+   ========================================================= */
 
-  position: absolute;
+#chat-drag-bar {
 
-  top: 0;
-  left: 0;
+  flex: 0 0 20px;
 
-  width: 100%;
-  height: 18px;
+  height: 20px;
 
-  z-index: 30;
+  display: flex;
+
+  align-items: center;
+
+  justify-content: center;
+
+  background:
+    rgba(255,255,255,0.05);
+
+  border-bottom:
+    1px solid
+    rgba(255,255,255,0.08);
+
+  color: rgba(255,255,255,0.45);
+
+  font-size: 14px;
+
+  line-height: 20px;
 
   cursor: grab;
+
+  user-select: none;
+
+  -webkit-user-select: none;
 
   touch-action: none;
 }
 
 
-#chat-drag-area.dragging {
+#chat-drag-bar:hover {
 
-  cursor: grabbing;
+  background:
+    rgba(255,255,255,0.10);
+
+  color:
+    rgba(255,255,255,0.75);
 }
 
+
+#chat-drag-bar.dragging {
+
+  cursor: grabbing;
+
+  background:
+    rgba(255,255,255,0.12);
+
+  color: #fff;
+}
+
+
+/* =========================================================
+   MESSAGES
+   ========================================================= */
 
 #messages {
 
   flex: 1;
+
+  min-height: 0;
 
   overflow-y: auto;
 
@@ -314,7 +351,7 @@ body {
 
   padding: 6px 10px;
 
-  color: white;
+  color: #fff;
 
   font-size: 13px;
 
@@ -323,7 +360,7 @@ body {
   word-break: break-all;
 
   background:
-    rgba(255, 255, 255, 0.08);
+    rgba(255,255,255,0.08);
 
   border-radius: 4px;
 }
@@ -331,40 +368,42 @@ body {
 
 .sender {
 
+  margin-right: 6px;
+
   color: #ffca28;
 
   font-weight: bold;
-
-  margin-right: 6px;
 }
 
 
 .timestamp {
 
+  margin-right: 6px;
+
   color: #aaa;
 
   font-size: 10px;
-
-  margin-right: 6px;
 }
 
 
-/* ==========================================================
+/* =========================================================
    INPUT
-   ========================================================== */
+   ========================================================= */
 
 #input-area {
 
   display: flex;
 
+  flex: 0 0 auto;
+
   padding: 8px;
 
   background:
-    rgba(0, 0, 0, 0.4);
+    rgba(0,0,0,0.4);
 
   border-top:
     1px solid
-    rgba(255, 255, 255, 0.1);
+    rgba(255,255,255,0.1);
 }
 
 
@@ -372,12 +411,16 @@ body {
 
   flex: 1;
 
+  min-width: 0;
+
   padding: 6px 10px;
 
-  color: white;
+  font-size: 13px;
+
+  color: #fff;
 
   background:
-    rgba(255, 255, 255, 0.15);
+    rgba(255,255,255,0.15);
 
   border:
     1px solid
@@ -386,8 +429,6 @@ body {
   border-radius: 4px;
 
   outline: none;
-
-  font-size: 13px;
 }
 
 
@@ -408,19 +449,20 @@ body {
   cursor: pointer;
 
   font-weight: bold;
+
+  font-size: 13px;
 }
 
 </style>
 
 </head>
 
-
 <body>
 
 
-<!-- =========================================================
+<!-- ======================================================
      TOP BAR
-     ========================================================= -->
+     ====================================================== -->
 
 <div id="top-bar-container">
 
@@ -431,8 +473,8 @@ body {
     </span>
 
     <input
-      id="url-input"
       type="text"
+      id="url-input"
       value="https://example.com"
     >
 
@@ -447,10 +489,8 @@ body {
     class="bar-group"
     style="
       margin-left:5px;
+      border-left:1px solid rgba(255,255,255,0.2);
       padding-left:10px;
-      border-left:
-        1px solid
-        rgba(255,255,255,0.2);
     "
   >
 
@@ -459,8 +499,8 @@ body {
     </span>
 
     <input
-      id="name-input"
       type="text"
+      id="name-input"
       value="ゲスト"
       maxlength="10"
     >
@@ -470,9 +510,9 @@ body {
 </div>
 
 
-<!-- =========================================================
+<!-- ======================================================
      iframe
-     ========================================================= -->
+     ====================================================== -->
 
 <iframe
   id="game-area"
@@ -480,22 +520,26 @@ body {
 ></iframe>
 
 
-<!-- =========================================================
+<!-- ======================================================
      CHAT
-     ========================================================= -->
+     ====================================================== -->
 
 <div id="chat-container">
 
-  <!-- 透明なドラッグ領域 -->
-  <div id="chat-drag-area"></div>
+  <div
+    id="chat-drag-bar"
+    title="ドラッグして移動"
+  >
+    ⋮⋮⋮
+  </div>
 
   <ul id="messages"></ul>
 
   <div id="input-area">
 
     <input
-      id="chat-input"
       type="text"
+      id="chat-input"
       placeholder="チャットを開始..."
       autocomplete="off"
     >
@@ -511,9 +555,9 @@ body {
 
 <script>
 
-// ============================================================
+// ==========================================================
 // DOM
-// ============================================================
+// ==========================================================
 
 const gameArea =
   document.getElementById("game-area");
@@ -528,27 +572,39 @@ const nameInput =
   document.getElementById("name-input");
 
 const topBar =
-  document.getElementById("top-bar-container");
+  document.getElementById(
+    "top-bar-container"
+  );
 
 const chatContainer =
-  document.getElementById("chat-container");
+  document.getElementById(
+    "chat-container"
+  );
 
-const chatDragArea =
-  document.getElementById("chat-drag-area");
+const chatDragBar =
+  document.getElementById(
+    "chat-drag-bar"
+  );
 
 const messages =
-  document.getElementById("messages");
+  document.getElementById(
+    "messages"
+  );
 
 const chatInput =
-  document.getElementById("chat-input");
+  document.getElementById(
+    "chat-input"
+  );
 
 const sendBtn =
-  document.getElementById("send-btn");
+  document.getElementById(
+    "send-btn"
+  );
 
 
-// ============================================================
-// チャットボックス ドラッグ
-// ============================================================
+// ==========================================================
+// CHAT DRAG
+// ==========================================================
 
 let isDragging =
   false;
@@ -560,12 +616,14 @@ let dragOffsetY =
   0;
 
 
-chatDragArea.addEventListener(
+// ----------------------------------------------------------
+// ドラッグ開始
+// ----------------------------------------------------------
+
+chatDragBar.addEventListener(
   "pointerdown",
   function (event) {
 
-    // 左クリック以外は無視
-    // touch/penではbutton判定しない
     if (
       event.pointerType === "mouse" &&
       event.button !== 0
@@ -593,16 +651,20 @@ chatDragArea.addEventListener(
       rect.top;
 
 
-    // right / bottom 基準から
-    // left / top 基準へ切り替える
+    // 初回ドラッグ時に
+    // right/bottom配置から
+    // left/top配置へ変換
     chatContainer.style.left =
       rect.left + "px";
+
 
     chatContainer.style.top =
       rect.top + "px";
 
+
     chatContainer.style.right =
       "auto";
+
 
     chatContainer.style.bottom =
       "auto";
@@ -612,26 +674,30 @@ chatDragArea.addEventListener(
       true;
 
 
-    chatDragArea.classList.add(
+    chatDragBar.classList.add(
       "dragging"
     );
 
 
     try {
 
-      chatDragArea
-        .setPointerCapture(
-          event.pointerId
-        );
+      chatDragBar.setPointerCapture(
+        event.pointerId
+      );
 
     } catch (error) {
-      // 非対応環境では何もしない
+
+      // Pointer Capture非対応時は無視
     }
   }
 );
 
 
-chatDragArea.addEventListener(
+// ----------------------------------------------------------
+// 移動
+// ----------------------------------------------------------
+
+chatDragBar.addEventListener(
   "pointermove",
   function (event) {
 
@@ -647,6 +713,7 @@ chatDragArea.addEventListener(
     const width =
       chatContainer.offsetWidth;
 
+
     const height =
       chatContainer.offsetHeight;
 
@@ -661,9 +728,9 @@ chatDragArea.addEventListener(
       dragOffsetY;
 
 
-    // ========================================================
-    // 画面外への移動を防止
-    // ========================================================
+    // --------------------------------------------------------
+    // 画面外へ出ないよう制限
+    // --------------------------------------------------------
 
     const maxX =
       Math.max(
@@ -711,6 +778,10 @@ chatDragArea.addEventListener(
 );
 
 
+// ----------------------------------------------------------
+// ドラッグ終了
+// ----------------------------------------------------------
+
 function finishDragging(
   event
 ) {
@@ -725,7 +796,7 @@ function finishDragging(
     false;
 
 
-  chatDragArea.classList.remove(
+  chatDragBar.classList.remove(
     "dragging"
   );
 
@@ -734,41 +805,40 @@ function finishDragging(
 
     try {
 
-      chatDragArea
-        .releasePointerCapture(
-          event.pointerId
-        );
+      chatDragBar.releasePointerCapture(
+        event.pointerId
+      );
 
     } catch (error) {
-      // 何もしない
+
+      // 無視
     }
   }
 }
 
 
-chatDragArea.addEventListener(
+chatDragBar.addEventListener(
   "pointerup",
   finishDragging
 );
 
 
-chatDragArea.addEventListener(
+chatDragBar.addEventListener(
   "pointercancel",
   finishDragging
 );
 
 
-// ============================================================
-// ウィンドウサイズ変更時
-//
-// 移動済みのチャットが画面外に出た場合、
-// 画面内へ戻す。
-// ============================================================
+// ==========================================================
+// ウィンドウリサイズ
+// ==========================================================
 
 window.addEventListener(
   "resize",
   function () {
 
+    // 一度も移動していない場合は
+    // right/bottom配置を維持
     if (
       chatContainer.style.left === ""
     ) {
@@ -828,9 +898,9 @@ window.addEventListener(
 );
 
 
-// ============================================================
+// ==========================================================
 // URL変更
-// ============================================================
+// ==========================================================
 
 function changeUrl() {
 
@@ -851,6 +921,7 @@ function changeUrl() {
 
     url =
       "https://" + url;
+
 
     urlInput.value =
       url;
@@ -901,11 +972,11 @@ urlInput.addEventListener(
 );
 
 
-// ============================================================
-// WebSocket
-// ============================================================
+// ==========================================================
+// WEBSOCKET
+// ==========================================================
 
-const wsProtocol =
+const protocol =
   window.location.protocol === "https:"
     ? "wss:"
     : "ws:";
@@ -913,26 +984,15 @@ const wsProtocol =
 
 const ws =
   new WebSocket(
-    wsProtocol +
+    protocol +
     "//" +
     window.location.host
   );
 
 
-// ============================================================
+// ==========================================================
 // TIMESTAMP
-//
-// 日本時間基準
-//
-// 今日:
-//   21:34
-//
-// 今年の過去:
-//   09/22 21:34
-//
-// 前年以前:
-//   2025/12/31 21:34
-// ============================================================
+// ==========================================================
 
 function getJapanDateParts(
   date
@@ -1004,9 +1064,7 @@ function formatTimestamp(
 
 
   const date =
-    new Date(
-      value
-    );
+    new Date(value);
 
 
   if (
@@ -1031,17 +1089,12 @@ function formatTimestamp(
     );
 
 
-  // ==========================================================
   // 今日
-  // ==========================================================
-
-  const isToday =
+  if (
     target.year === now.year &&
     target.month === now.month &&
-    target.day === now.day;
-
-
-  if (isToday) {
+    target.day === now.day
+  ) {
 
     return (
       target.hour +
@@ -1051,13 +1104,9 @@ function formatTimestamp(
   }
 
 
-  // ==========================================================
   // 今年
-  // ==========================================================
-
   if (
-    target.year ===
-    now.year
+    target.year === now.year
   ) {
 
     return (
@@ -1072,10 +1121,7 @@ function formatTimestamp(
   }
 
 
-  // ==========================================================
   // 前年以前
-  // ==========================================================
-
   return (
     target.year +
     "/" +
@@ -1090,9 +1136,9 @@ function formatTimestamp(
 }
 
 
-// ============================================================
-// WebSocket受信
-// ============================================================
+// ==========================================================
+// MESSAGE RECEIVE
+// ==========================================================
 
 ws.onmessage =
   function (event) {
@@ -1111,9 +1157,9 @@ ws.onmessage =
         );
 
 
-      // ======================================================
-      // 送信者
-      // ======================================================
+      // ------------------------------------------------------
+      // Sender
+      // ------------------------------------------------------
 
       const sender =
         document.createElement(
@@ -1136,39 +1182,39 @@ ws.onmessage =
       );
 
 
-      // ======================================================
-      // timestamp
-      // ======================================================
+      // ------------------------------------------------------
+      // Timestamp
+      // ------------------------------------------------------
 
       if (
         data.timestamp
       ) {
 
-        const time =
+        const timestamp =
           document.createElement(
             "span"
           );
 
 
-        time.className =
+        timestamp.className =
           "timestamp";
 
 
-        time.textContent =
+        timestamp.textContent =
           formatTimestamp(
             data.timestamp
           );
 
 
         li.appendChild(
-          time
+          timestamp
         );
       }
 
 
-      // ======================================================
-      // 本文
-      // ======================================================
+      // ------------------------------------------------------
+      // Text
+      // ------------------------------------------------------
 
       const text =
         document.createTextNode(
@@ -1186,13 +1232,9 @@ ws.onmessage =
       );
 
 
-      // ======================================================
-      // 最大30件
-      // ======================================================
-
       while (
         messages.children.length >
-        30
+        MAX_HISTORY_CLIENT
       ) {
 
         messages.removeChild(
@@ -1215,9 +1257,13 @@ ws.onmessage =
   };
 
 
-// ============================================================
-// WebSocket状態
-// ============================================================
+const MAX_HISTORY_CLIENT =
+  30;
+
+
+// ==========================================================
+// WEBSOCKET STATUS
+// ==========================================================
 
 ws.onopen =
   function () {
@@ -1247,9 +1293,9 @@ ws.onclose =
   };
 
 
-// ============================================================
-// メッセージ送信
-// ============================================================
+// ==========================================================
+// SEND MESSAGE
+// ==========================================================
 
 function sendMessage() {
 
@@ -1303,19 +1349,11 @@ function sendMessage() {
 }
 
 
-// ============================================================
-// 送信ボタン
-// ============================================================
-
 sendBtn.addEventListener(
   "click",
   sendMessage
 );
 
-
-// ============================================================
-// Enter送信
-// ============================================================
 
 chatInput.addEventListener(
   "keydown",
@@ -1332,9 +1370,9 @@ chatInput.addEventListener(
 );
 
 
-// ============================================================
+// ==========================================================
 // "/" shortcut
-// ============================================================
+// ==========================================================
 
 window.addEventListener(
   "keydown",
@@ -1391,7 +1429,8 @@ const server =
       );
 
       console.log(
-        "PORT: " + port
+        "PORT: " +
+        port
       );
 
       console.log(
@@ -1410,12 +1449,13 @@ const server =
 
 const wss =
   new WebSocketServer({
-    server: server
+    server:
+      server
   });
 
 
 // ============================================================
-// GASから履歴取得
+// GAS GET
 // ============================================================
 
 async function loadHistoryFromGAS() {
@@ -1523,19 +1563,9 @@ async function loadHistoryFromGAS() {
 
         } catch (error) {
 
-          console.error(
-            "[GAS GET] JSONではありません"
-          );
-
-
-          console.error(
-            "[GAS GET] RESPONSE:",
-            body
-          );
-
-
           throw new Error(
-            "GAS response is not JSON"
+            "GAS response is not JSON: " +
+            body
           );
         }
 
@@ -1546,21 +1576,11 @@ async function loadHistoryFromGAS() {
           )
         ) {
 
-          console.error(
-            "[GAS GET] 配列ではありません:",
-            data
-          );
-
-
           throw new Error(
             "GAS response is not an array"
           );
         }
 
-
-        // ====================================================
-        // メモリ履歴更新
-        // ====================================================
 
         chatHistory.length =
           0;
@@ -1663,7 +1683,7 @@ async function loadHistoryFromGAS() {
 
 
 // ============================================================
-// GASへ保存
+// GAS POST
 // ============================================================
 
 async function saveMessageToGAS(
@@ -1712,6 +1732,7 @@ async function saveMessageToGAS(
             "follow",
 
           headers: {
+
             "Content-Type":
               "application/json"
           },
@@ -1874,7 +1895,7 @@ wss.on(
 
 
     // ========================================================
-    // 新規メッセージ
+    // MESSAGE
     // ========================================================
 
     ws.on(
@@ -1932,7 +1953,7 @@ wss.on(
 
 
           // ==================================================
-          // timestampは一度だけ生成
+          // timestamp
           // ==================================================
 
           const timestamp =
@@ -1962,7 +1983,7 @@ wss.on(
 
 
           // ==================================================
-          // メモリ履歴
+          // Memory
           // ==================================================
 
           chatHistory.push(
@@ -1980,7 +2001,7 @@ wss.on(
 
 
           // ==================================================
-          // 全クライアントへ送信
+          // Broadcast
           // ==================================================
 
           wss.clients.forEach(
@@ -2002,7 +2023,7 @@ wss.on(
 
 
           // ==================================================
-          // GAS保存
+          // Spreadsheet
           // ==================================================
 
           await saveMessageToGAS(
@@ -2022,7 +2043,7 @@ wss.on(
 
 
     // ========================================================
-    // 切断
+    // CLOSE
     // ========================================================
 
     ws.on(
@@ -2037,7 +2058,7 @@ wss.on(
 
 
     // ========================================================
-    // エラー
+    // ERROR
     // ========================================================
 
     ws.on(
