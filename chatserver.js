@@ -1,19 +1,17 @@
+// ============================================================
+// chatserver.js
+// Render + WebSocket + GAS + Spreadsheet
+// URLリンク化・画像埋め込み・未読通知対応版
+// ============================================================
+
 const express = require("express");
 const { WebSocketServer, WebSocket } = require("ws");
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// ========================================
-// GAS設定
-// ========================================
-
 const GAS_DEPLOY_URL =
   "https://script.google.com/macros/s/AKfycbxvqp1PutymnKwjSzUBnDR3QXz498J2Ba1TrwYrMlBGd-66VmxH_PRoFAfXChDHFfv0Bg/exec";
-
-// ========================================
-// チャット履歴
-// ========================================
 
 const chatHistory = [];
 const MAX_HISTORY = 30;
@@ -21,439 +19,244 @@ const MAX_HISTORY = 30;
 let historyLoaded = false;
 let historyLoadingPromise = null;
 
-// ========================================
-// GASから履歴を取得
-// ========================================
 
-async function loadHistoryFromGAS() {
-  if (historyLoaded) {
-    return;
-  }
-
-  if (historyLoadingPromise) {
-    return historyLoadingPromise;
-  }
-
-  historyLoadingPromise = (async () => {
-    try {
-      console.log("[GAS GET] 接続開始");
-
-      const response = await fetch(GAS_DEPLOY_URL, {
-        method: "GET",
-        redirect: "follow"
-      });
-
-      console.log("[GAS GET] HTTP STATUS:", response.status);
-
-      if (!response.ok) {
-        throw new Error("GAS GET HTTP " + response.status);
-      }
-
-      const data = await response.json();
-
-      if (!Array.isArray(data)) {
-        throw new Error("GASから配列が返されませんでした");
-      }
-
-      const loadedMessages = data
-        .filter((item) => {
-          return (
-            item &&
-            typeof item.text === "string" &&
-            item.text.trim() !== ""
-          );
-        })
-        .map((item) => {
-          return {
-            text: item.text,
-            senderId: String(
-              item.sender_id !== undefined
-                ? item.sender_id
-                : item.senderId || "ゲスト"
-            ),
-            timestamp: item.timestamp || new Date().toISOString()
-          };
-        })
-        .slice(-MAX_HISTORY);
-
-      chatHistory.length = 0;
-      chatHistory.push(...loadedMessages);
-
-      historyLoaded = true;
-
-      console.log("[GAS GET] 成功");
-      console.log("[GAS GET] 履歴件数:", chatHistory.length);
-
-    } catch (error) {
-      console.error("[GAS GET] エラー:", error.message);
-
-    } finally {
-      historyLoadingPromise = null;
-    }
-  })();
-
-  return historyLoadingPromise;
-}
-
-// ========================================
-// GASへメッセージ保存
-// ========================================
-
-async function saveMessageToGAS(message) {
-  try {
-    const payload = {
-      action: "write",
-      text: message.text,
-      sender_id: message.senderId,
-      timestamp: message.timestamp
-    };
-
-    const response = await fetch(GAS_DEPLOY_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "text/plain;charset=utf-8"
-      },
-      body: JSON.stringify(payload),
-      redirect: "follow"
-    });
-
-    if (!response.ok) {
-      throw new Error("GAS POST HTTP " + response.status);
-    }
-
-    const result = await response.json();
-
-    if (result && result.ok === false) {
-      throw new Error("GASが保存失敗を返しました");
-    }
-
-    console.log("[GAS POST] 保存成功");
-
-  } catch (error) {
-    console.error("[GAS POST] 保存エラー:", error.message);
-  }
-}
-
-// ========================================
+// ============================================================
 // HTML
-// ========================================
+// ============================================================
 
-app.get("/", (req, res) => {
-  res.send(String.raw`
+app.get("/", function (req, res) {
+
+  res.send(`
 <!DOCTYPE html>
 <html lang="ja">
 
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
 <title>カスタムチャットシステム Pro</title>
 
 <style>
 
-* {
-  box-sizing: border-box;
-}
-
-html,
-body {
+html, body {
   margin: 0;
   padding: 0;
   width: 100%;
   height: 100%;
   overflow: hidden;
-  font-family: Arial, sans-serif;
-}
-
-body {
+  font-family: sans-serif;
   background: #111;
+  color: #fff;
 }
-
-/* ========================================
-   ゲーム表示エリア
-======================================== */
 
 #game-area {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   border: none;
-  background: white;
+  z-index: 1;
 }
 
-/* ========================================
-   URL入力エリア
-======================================== */
-
-#url-controls {
+#top-bar-container {
   position: absolute;
-  top: 10px;
-  left: 10px;
+  top: 15px;
+  left: 15px;
   z-index: 10;
-
   display: flex;
-  gap: 5px;
-
-  max-width: calc(100% - 20px);
-}
-
-#url-input {
-  width: 300px;
-  max-width: 60vw;
-  padding: 6px;
-  font-size: 13px;
-}
-
-#url-btn {
-  padding: 6px 12px;
-  cursor: pointer;
-}
-
-/* ========================================
-   チャット全体
-======================================== */
-
-#chat-container {
-  position: absolute;
-
-  right: 30px;
-  bottom: 30px;
-
-  width: 320px;
-  height: 260px;
-
-  z-index: 20;
-
-  display: flex;
-  flex-direction: column;
-
-  background: rgba(20, 20, 20, 0.92);
-
-  border: 1px solid #555;
-  border-radius: 6px;
-
-  color: white;
-
-  overflow: hidden;
-
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
-}
-
-/* ========================================
-   ドラッグバー
-======================================== */
-
-#chat-drag-bar {
-  height: 20px;
-  min-height: 20px;
-
-  background: #333;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  position: relative;
-
-  cursor: move;
-  touch-action: none;
-
-  user-select: none;
-}
-
-#drag-handle {
-  color: #aaa;
-  font-size: 15px;
-  line-height: 20px;
-  pointer-events: none;
-}
-
-/* ========================================
-   通知ボタン
-======================================== */
-
-#notification-btn {
-  position: absolute;
-
-  right: 5px;
-  top: 0;
-
-  height: 20px;
-  min-width: 24px;
-
-  padding: 0 3px;
-
-  border: none;
-  background: transparent;
-
-  color: white;
-  font-size: 14px;
-
-  cursor: pointer;
-
-  line-height: 20px;
-}
-
-#notification-btn:hover {
-  background: #555;
-  border-radius: 3px;
-}
-
-#notification-btn.enabled {
-  color: #8aff8a;
-}
-
-#notification-btn.denied {
-  opacity: 0.45;
-}
-
-/* ========================================
-   名前入力
-======================================== */
-
-#name-area {
-  padding: 5px;
-
-  display: flex;
-  align-items: center;
-  gap: 5px;
-
-  background: #252525;
-}
-
-#name-area label {
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-#name-input {
-  width: 100%;
-  min-width: 0;
-
-  padding: 5px;
-
-  border: 1px solid #555;
-  border-radius: 3px;
-
-  background: #fff;
-  color: #111;
-}
-
-/* ========================================
-   メッセージ一覧
-======================================== */
-
-#messages {
-  flex: 1;
-
-  min-height: 0;
-
-  overflow-y: auto;
-  overflow-x: hidden;
-
+  gap: 10px;
   padding: 8px;
-
-  font-size: 13px;
-  line-height: 1.5;
-
-  user-select: text;
-
-  overflow-wrap: anywhere;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+  transition: opacity 0.5s ease, transform 0.5s ease;
 }
 
-.chat-message {
-  margin-bottom: 7px;
+.bar-group {
+  display: flex;
+  gap: 4px;
+  align-items: center;
 }
 
-.chat-message-header {
-  color: #aaa;
+.bar-label {
+  color: #ccc;
   font-size: 11px;
-  margin-bottom: 2px;
-}
-
-.chat-message-name {
-  color: #8fcaff;
   font-weight: bold;
 }
 
-.chat-message-body {
+#url-input {
+  width: 220px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  outline: none;
+}
+
+#url-btn {
+  padding: 4px 10px;
   color: white;
+  background: #2196F3;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 12px;
+}
+
+#name-input {
+  width: 100px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #ffca28;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  outline: none;
+  font-weight: bold;
+}
+
+#chat-container {
+  position: absolute;
+  right: 30px;
+  bottom: 30px;
+  width: 320px;
+  height: 260px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+
+#chat-drag-bar {
+  flex: 0 0 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.45);
+  font-size: 14px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+#chat-drag-bar:hover {
+  background: rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.75);
+}
+
+#chat-drag-bar.dragging {
+  cursor: grabbing;
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+}
+
+#messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 10px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#messages li {
+  padding: 6px 10px;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-all;
+  background: rgba(255,255,255,0.08);
+  border-radius: 4px;
+}
+
+.sender {
+  margin-right: 6px;
+  color: #ffca28;
+  font-weight: bold;
+}
+
+.timestamp {
+  margin-right: 6px;
+  color: #aaa;
+  font-size: 10px;
+}
+
+.chat-link {
+  color: #64b5f6;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
+.chat-link:hover {
+  color: #90caf9;
+}
+
+.chat-content {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.chat-message-body a {
-  color: #80c7ff;
-  text-decoration: underline;
-}
-
-.chat-message-body a:hover {
-  color: #b5e0ff;
-}
-
-.chat-image-link {
-  display: block;
-  width: fit-content;
-  max-width: 100%;
-
-  margin-top: 4px;
-  margin-bottom: 4px;
+.chat-image-container {
+  margin-top: 7px;
+  margin-bottom: 5px;
 }
 
 .chat-image {
   display: block;
-
   max-width: 100%;
-  max-height: 250px;
-
+  max-height: 220px;
   width: auto;
   height: auto;
-
-  border-radius: 4px;
-
+  border-radius: 5px;
+  object-fit: contain;
   cursor: pointer;
+  background: rgba(255,255,255,0.05);
 }
 
-/* ========================================
-   送信エリア
-======================================== */
-
-#chat-input-area {
+#input-area {
   display: flex;
-  gap: 5px;
-
-  padding: 5px;
-
-  background: #252525;
+  flex: 0 0 auto;
+  padding: 8px;
+  background: rgba(0,0,0,0.4);
+  border-top: 1px solid rgba(255,255,255,0.1);
 }
 
 #chat-input {
   flex: 1;
   min-width: 0;
-
-  padding: 6px;
-
-  border: 1px solid #555;
-  border-radius: 3px;
-
+  padding: 6px 10px;
   font-size: 13px;
+  color: #fff;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  outline: none;
 }
 
 #send-btn {
-  padding: 6px 10px;
-
-  border: none;
-  border-radius: 3px;
-
-  background: #1684d8;
+  margin-left: 8px;
+  padding: 6px 14px;
   color: white;
-
+  background: #4caf50;
+  border: none;
+  border-radius: 4px;
   cursor: pointer;
-}
-
-#send-btn:hover {
-  background: #329fea;
+  font-weight: bold;
+  font-size: 13px;
 }
 
 </style>
@@ -461,742 +264,369 @@ body {
 
 <body>
 
-<!-- ========================================
-     ゲームエリア
-======================================== -->
+<div id="top-bar-container">
 
-<iframe
-  id="game-area"
-  title="ゲームエリア"
-></iframe>
+  <div class="bar-group">
+    <span class="bar-label">URL:</span>
+    <input type="text" id="url-input" value="https://example.com">
+    <button id="url-btn">移動</button>
+  </div>
 
-<div id="url-controls">
-
-  <input
-    id="url-input"
-    type="text"
-    placeholder="表示するURLを入力"
-  >
-
-  <button id="url-btn">
-    移動
-  </button>
+  <div class="bar-group"
+    style="margin-left:5px;border-left:1px solid rgba(255,255,255,0.2);padding-left:10px;">
+    <span class="bar-label">NAME:</span>
+    <input type="text" id="name-input" value="ゲスト" maxlength="10">
+  </div>
 
 </div>
 
-<!-- ========================================
-     チャット
-======================================== -->
+<iframe id="game-area" src="https://example.com"></iframe>
 
 <div id="chat-container">
 
-  <div id="chat-drag-bar">
+  <div id="chat-drag-bar" title="ドラッグして移動">⋮⋮⋮</div>
 
-    <span id="drag-handle">⋮⋮⋮</span>
+  <ul id="messages"></ul>
 
-    <button
-      id="notification-btn"
-      type="button"
-      title="通知設定"
-    >🔔</button>
-
-  </div>
-
-  <div id="name-area">
-
-    <label for="name-input">名前</label>
-
+  <div id="input-area">
     <input
-      id="name-input"
       type="text"
-      placeholder="ゲスト"
-      maxlength="30"
-    >
-
-  </div>
-
-  <div id="messages"></div>
-
-  <div id="chat-input-area">
-
-    <input
       id="chat-input"
-      type="text"
-      placeholder="メッセージを入力"
+      placeholder="チャットを開始..."
+      autocomplete="off"
     >
-
-    <button id="send-btn">
-      送信
-    </button>
-
+    <button id="send-btn">送信</button>
   </div>
 
 </div>
 
 <script>
 
-// ========================================
-// 基本設定
-// ========================================
-
-const BASE_TITLE = "カスタムチャットシステム Pro";
-
-const STORAGE_NAME_KEY = "chatserver_saved_name";
-
-const STORAGE_POSITION_KEY = "chatserver_saved_position";
-
-const chatContainer = document.getElementById("chat-container");
-
-const dragBar = document.getElementById("chat-drag-bar");
-
-const nameInput = document.getElementById("name-input");
-
-const messagesElement = document.getElementById("messages");
-
-const chatInput = document.getElementById("chat-input");
-
-const sendButton = document.getElementById("send-btn");
-
-const notificationButton = document.getElementById("notification-btn");
+// ============================================================
+// DOM
+// ============================================================
 
 const gameArea = document.getElementById("game-area");
-
 const urlInput = document.getElementById("url-input");
+const urlBtn = document.getElementById("url-btn");
+const nameInput = document.getElementById("name-input");
+const topBar = document.getElementById("top-bar-container");
 
-const urlButton = document.getElementById("url-btn");
+const chatContainer = document.getElementById("chat-container");
+const chatDragBar = document.getElementById("chat-drag-bar");
 
-// ========================================
-// 名前の保存と復元
-// ========================================
+const messages = document.getElementById("messages");
+const chatInput = document.getElementById("chat-input");
+const sendBtn = document.getElementById("send-btn");
 
-try {
-  const savedName = localStorage.getItem(STORAGE_NAME_KEY);
 
-  if (savedName !== null) {
-    nameInput.value = savedName;
+// ============================================================
+// localStorage
+// ============================================================
+
+const STORAGE_NAME_KEY = "chatserver_saved_name";
+const STORAGE_POSITION_KEY = "chatserver_saved_position";
+
+
+function loadSavedName() {
+  try {
+    const saved = localStorage.getItem(STORAGE_NAME_KEY);
+    nameInput.value =
+      saved && saved.trim()
+        ? saved.slice(0, 10)
+        : "ゲスト";
+  } catch (error) {
+    nameInput.value = "ゲスト";
   }
-} catch (error) {
-  console.warn("名前の復元に失敗:", error);
 }
 
-nameInput.addEventListener("input", () => {
+
+function saveName() {
+  const name = nameInput.value.trim() || "ゲスト";
+
   try {
-    localStorage.setItem(STORAGE_NAME_KEY, nameInput.value);
+    localStorage.setItem(
+      STORAGE_NAME_KEY,
+      name.slice(0, 10)
+    );
   } catch (error) {
-    console.warn("名前の保存に失敗:", error);
+    console.warn(error);
   }
+}
+
+
+loadSavedName();
+
+nameInput.addEventListener("input", saveName);
+
+nameInput.addEventListener("change", function () {
+  if (!nameInput.value.trim()) {
+    nameInput.value = "ゲスト";
+  }
+  saveName();
 });
 
-// ========================================
-// チャット位置の復元
-// ========================================
 
-function restoreChatPosition() {
+// ============================================================
+// 位置保存
+// ============================================================
+
+function saveChatPosition() {
+  try {
+    const rect = chatContainer.getBoundingClientRect();
+    localStorage.setItem(
+      STORAGE_POSITION_KEY,
+      JSON.stringify({
+        x: rect.left,
+        y: rect.top
+      })
+    );
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+
+function loadChatPosition() {
   try {
     const saved = localStorage.getItem(STORAGE_POSITION_KEY);
 
-    if (!saved) {
-      return;
-    }
+    if (!saved) return;
 
     const position = JSON.parse(saved);
 
     if (
-      typeof position.left !== "number" ||
-      typeof position.top !== "number" ||
-      !Number.isFinite(position.left) ||
-      !Number.isFinite(position.top)
-    ) {
-      return;
-    }
+      !Number.isFinite(position.x) ||
+      !Number.isFinite(position.y)
+    ) return;
 
-    const maxLeft = Math.max(
+    const maxX = Math.max(
       0,
       window.innerWidth - chatContainer.offsetWidth
     );
 
-    const maxTop = Math.max(
+    const maxY = Math.max(
       0,
       window.innerHeight - chatContainer.offsetHeight
     );
 
-    const left = Math.max(
-      0,
-      Math.min(position.left, maxLeft)
-    );
+    const x = Math.max(0, Math.min(position.x, maxX));
+    const y = Math.max(0, Math.min(position.y, maxY));
 
-    const top = Math.max(
-      0,
-      Math.min(position.top, maxTop)
-    );
-
-    chatContainer.style.left = left + "px";
-    chatContainer.style.top = top + "px";
-
+    chatContainer.style.left = x + "px";
+    chatContainer.style.top = y + "px";
     chatContainer.style.right = "auto";
     chatContainer.style.bottom = "auto";
 
   } catch (error) {
-    console.warn("チャット位置の復元に失敗:", error);
+    console.warn(error);
   }
 }
 
-restoreChatPosition();
 
-// ========================================
-// ドラッグ移動
-// ========================================
+loadChatPosition();
 
-let dragging = false;
 
-let dragStartX = 0;
-let dragStartY = 0;
+// ============================================================
+// ドラッグ
+// ============================================================
 
-let containerStartX = 0;
-let containerStartY = 0;
+let isDragging = false;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
 
-dragBar.addEventListener("pointerdown", (event) => {
 
-  if (event.target.closest("#notification-btn")) {
-    return;
-  }
+chatDragBar.addEventListener("pointerdown", function (event) {
 
-  if (event.button !== 0) {
-    return;
-  }
+  if (
+    event.pointerType === "mouse" &&
+    event.button !== 0
+  ) return;
 
-  dragging = true;
+  event.preventDefault();
 
   const rect = chatContainer.getBoundingClientRect();
 
-  dragStartX = event.clientX;
-  dragStartY = event.clientY;
-
-  containerStartX = rect.left;
-  containerStartY = rect.top;
+  dragOffsetX = event.clientX - rect.left;
+  dragOffsetY = event.clientY - rect.top;
 
   chatContainer.style.left = rect.left + "px";
   chatContainer.style.top = rect.top + "px";
-
   chatContainer.style.right = "auto";
   chatContainer.style.bottom = "auto";
 
-  dragBar.setPointerCapture(event.pointerId);
+  isDragging = true;
+
+  chatDragBar.classList.add("dragging");
+
+  try {
+    chatDragBar.setPointerCapture(event.pointerId);
+  } catch (error) {}
 });
 
-dragBar.addEventListener("pointermove", (event) => {
 
-  if (!dragging) {
-    return;
-  }
+chatDragBar.addEventListener("pointermove", function (event) {
 
-  const dx = event.clientX - dragStartX;
-  const dy = event.clientY - dragStartY;
+  if (!isDragging) return;
 
-  let left = containerStartX + dx;
-  let top = containerStartY + dy;
+  event.preventDefault();
 
-  const maxLeft = Math.max(
+  const maxX = Math.max(
     0,
     window.innerWidth - chatContainer.offsetWidth
   );
 
-  const maxTop = Math.max(
+  const maxY = Math.max(
     0,
     window.innerHeight - chatContainer.offsetHeight
   );
 
-  left = Math.max(0, Math.min(left, maxLeft));
+  const x = Math.max(
+    0,
+    Math.min(event.clientX - dragOffsetX, maxX)
+  );
 
-  top = Math.max(0, Math.min(top, maxTop));
+  const y = Math.max(
+    0,
+    Math.min(event.clientY - dragOffsetY, maxY)
+  );
 
-  chatContainer.style.left = left + "px";
-  chatContainer.style.top = top + "px";
+  chatContainer.style.left = x + "px";
+  chatContainer.style.top = y + "px";
 });
 
-function finishDragging() {
 
-  if (!dragging) {
-    return;
-  }
+function finishDragging(event) {
 
-  dragging = false;
+  if (!isDragging) return;
+
+  isDragging = false;
+  chatDragBar.classList.remove("dragging");
+
+  try {
+    chatDragBar.releasePointerCapture(event.pointerId);
+  } catch (error) {}
+
+  saveChatPosition();
+}
+
+
+chatDragBar.addEventListener("pointerup", finishDragging);
+chatDragBar.addEventListener("pointercancel", finishDragging);
+
+
+window.addEventListener("resize", function () {
+
+  if (!chatContainer.style.left) return;
 
   const rect = chatContainer.getBoundingClientRect();
 
-  try {
-    localStorage.setItem(
-      STORAGE_POSITION_KEY,
-      JSON.stringify({
-        left: rect.left,
-        top: rect.top
-      })
-    );
-  } catch (error) {
-    console.warn("チャット位置の保存に失敗:", error);
-  }
-}
+  const maxX = Math.max(
+    0,
+    window.innerWidth - rect.width
+  );
 
-dragBar.addEventListener("pointerup", finishDragging);
+  const maxY = Math.max(
+    0,
+    window.innerHeight - rect.height
+  );
 
-dragBar.addEventListener("pointercancel", finishDragging);
+  chatContainer.style.left =
+    Math.max(0, Math.min(rect.left, maxX)) + "px";
 
-dragBar.addEventListener("lostpointercapture", finishDragging);
+  chatContainer.style.top =
+    Math.max(0, Math.min(rect.top, maxY)) + "px";
 
-// ========================================
-// URL移動
-// ========================================
+  saveChatPosition();
+});
 
-function changeGameUrl() {
+
+// ============================================================
+// URL変更
+// ============================================================
+
+function changeUrl() {
 
   let url = urlInput.value.trim();
 
-  if (!url) {
-    return;
-  }
-
-  if (!/^https?:\/\//i.test(url)) {
-    url = "https://" + url;
-  }
-
-  try {
-    const parsed = new URL(url);
-
-    if (
-      parsed.protocol !== "http:" &&
-      parsed.protocol !== "https:"
-    ) {
-      return;
-    }
-
-    gameArea.src = parsed.href;
-
-  } catch (error) {
-    alert("正しいURLを入力してください");
-  }
-}
-
-urlButton.addEventListener("click", changeGameUrl);
-
-urlInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    changeGameUrl();
-  }
-});
-
-// ========================================
-// 日本時間表示
-// ========================================
-
-function getJapanDateParts(value) {
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  const formatter = new Intl.DateTimeFormat("ja-JP", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  });
-
-  const parts = formatter.formatToParts(date);
-
-  const result = {};
-
-  for (const part of parts) {
-    if (part.type !== "literal") {
-      result[part.type] = part.value;
-    }
-  }
-
-  return result;
-}
-
-function formatTimestamp(value) {
-
-  const target = getJapanDateParts(value);
-
-  if (!target) {
-    return "";
-  }
-
-  const now = getJapanDateParts(new Date());
-
-  const time = target.hour + ":" + target.minute;
+  if (!url) return;
 
   if (
-    target.year === now.year &&
-    target.month === now.month &&
-    target.day === now.day
+    !url.startsWith("http://") &&
+    !url.startsWith("https://")
   ) {
-    return time;
+    url = "https://" + url;
+    urlInput.value = url;
   }
 
-  const monthDay =
-    target.month + "/" + target.day;
+  gameArea.src = url;
+  topBar.style.opacity = "0";
+  topBar.style.transform = "translateY(-20px)";
 
-  if (target.year === now.year) {
-    return monthDay + " " + time;
-  }
-
-  return target.year + "/" + monthDay + " " + time;
+  setTimeout(function () {
+    topBar.style.display = "none";
+  }, 500);
 }
 
-// ========================================
-// 画像URL判定
-// ========================================
 
-function isImageUrl(url) {
+urlBtn.addEventListener("click", changeUrl);
 
-  try {
-
-    const parsed = new URL(url);
-
-    if (
-      parsed.protocol !== "http:" &&
-      parsed.protocol !== "https:"
-    ) {
-      return false;
-    }
-
-    const hostname = parsed.hostname.toLowerCase();
-    const pathname = parsed.pathname.toLowerCase();
-
-    // 通常の画像拡張子
-    if (/\.(png|jpg|jpeg|gif|webp|avif|bmp|svg|apng|jfif|tif|tiff)$/i.test(pathname)) {
-      return true;
-    }
-
-    // Bing画像
-    if (
-      hostname === "th.bing.com" &&
-      pathname.startsWith("/th/id/")
-    ) {
-      return true;
-    }
-
-    // Google画像サムネイル
-    if (
-      hostname === "encrypted-tbn0.gstatic.com" ||
-      hostname === "encrypted-tbn1.gstatic.com" ||
-      hostname === "encrypted-tbn2.gstatic.com" ||
-      hostname === "encrypted-tbn3.gstatic.com"
-    ) {
-      return true;
-    }
-
-    // Google画像配信
-    if (
-      hostname === "lh3.googleusercontent.com" ||
-      hostname === "lh4.googleusercontent.com" ||
-      hostname === "lh5.googleusercontent.com" ||
-      hostname === "lh6.googleusercontent.com"
-    ) {
-      return true;
-    }
-
-    // Discord画像
-    if (
-      hostname === "cdn.discordapp.com" ||
-      hostname === "media.discordapp.net"
-    ) {
-      return true;
-    }
-
-    // Imgur直接画像
-    if (hostname === "i.imgur.com") {
-      return true;
-    }
-
-    return false;
-
-  } catch (error) {
-    return false;
-  }
-}
-
-// ========================================
-// リンクと画像の表示
-// ========================================
-
-function appendRichText(container, text) {
-
-  const urlRegex = /https?:\/\/[^\s<>"']+/gi;
-
-  let lastIndex = 0;
-
-  let match;
-
-  while ((match = urlRegex.exec(text)) !== null) {
-
-    const start = match.index;
-
-    const matchedUrl = match[0];
-
-    // URLの前にある文章
-    if (start > lastIndex) {
-      container.appendChild(
-        document.createTextNode(
-          text.slice(lastIndex, start)
-        )
-      );
-    }
-
-    // 文末の句読点などをURLから除外
-    let url = matchedUrl;
-
-    let trailing = "";
-
-    while (/[.,!?。、，．！？]$/.test(url)) {
-      trailing = url.slice(-1) + trailing;
-      url = url.slice(0, -1);
-    }
-
-    if (isImageUrl(url)) {
-
-      // 画像リンク
-      const link = document.createElement("a");
-
-      link.href = url;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-
-      link.className = "chat-image-link";
-
-      // 画像
-      const image = document.createElement("img");
-
-      image.src = url;
-      image.alt = "投稿画像";
-
-      image.className = "chat-image";
-
-      image.loading = "lazy";
-
-      image.referrerPolicy = "no-referrer";
-
-      link.appendChild(image);
-
-      // 読み込み失敗時
-      image.addEventListener("error", () => {
-
-        link.textContent = "画像を開く";
-
-        link.className = "";
-
-      });
-
-      container.appendChild(link);
-
-    } else {
-
-      // 通常URL
-      const link = document.createElement("a");
-
-      link.href = url;
-
-      link.target = "_blank";
-
-      link.rel = "noopener noreferrer";
-
-      link.textContent = url;
-
-      container.appendChild(link);
-    }
-
-    if (trailing) {
-      container.appendChild(
-        document.createTextNode(trailing)
-      );
-    }
-
-    lastIndex = start + matchedUrl.length;
-  }
-
-  // 最後のURLより後ろの文章
-  if (lastIndex < text.length) {
-
-    container.appendChild(
-      document.createTextNode(
-        text.slice(lastIndex)
-      )
-    );
-
-  }
-}
-
-// ========================================
-// メッセージ表示
-// ========================================
-
-function addMessage(message) {
-
-  const wrapper = document.createElement("div");
-
-  wrapper.className = "chat-message";
-
-  const header = document.createElement("div");
-
-  header.className = "chat-message-header";
-
-  const name = document.createElement("span");
-
-  name.className = "chat-message-name";
-
-  name.textContent = String(
-    message.senderId || "ゲスト"
-  );
-
-  const timestamp = document.createElement("span");
-
-  timestamp.textContent =
-    " " + formatTimestamp(message.timestamp);
-
-  header.appendChild(name);
-
-  header.appendChild(timestamp);
-
-  const body = document.createElement("div");
-
-  body.className = "chat-message-body";
-
-  appendRichText(
-    body,
-    String(message.text || "")
-  );
-
-  wrapper.appendChild(header);
-
-  wrapper.appendChild(body);
-
-  messagesElement.appendChild(wrapper);
-
-  messagesElement.scrollTop =
-    messagesElement.scrollHeight;
-}
-
-// ========================================
-// 未読通知機能
-// ========================================
-
-let unreadCount = 0;
-
-// 現在表示している通知
-let activeNotification = null;
-
-// 通知に対応しているか
-function notificationSupported() {
-  return "Notification" in window;
-}
-
-// 通知ボタンの状態更新
-function updateNotificationButton() {
-
-  notificationButton.classList.remove(
-    "enabled",
-    "denied"
-  );
-
-  if (!notificationSupported()) {
-
-    notificationButton.title =
-      "このブラウザは通知に対応していません";
-
-    return;
-  }
-
-  if (Notification.permission === "granted") {
-
-    notificationButton.classList.add("enabled");
-
-    notificationButton.title =
-      "通知は許可されています";
-
-  } else if (Notification.permission === "denied") {
-
-    notificationButton.classList.add("denied");
-
-    notificationButton.title =
-      "通知がブロックされています";
-
-  } else {
-
-    notificationButton.title =
-      "クリックして通知を許可";
-  }
-}
-
-// ========================================
-// 通知許可ボタン
-// ========================================
-
-notificationButton.addEventListener("click", async () => {
-
-  if (!notificationSupported()) {
-
-    alert(
-      "このブラウザはデスクトップ通知に対応していません。"
-    );
-
-    return;
-  }
-
-  if (Notification.permission === "granted") {
-
-    alert("通知はすでに許可されています。");
-
-    return;
-  }
-
-  if (Notification.permission === "denied") {
-
-    alert(
-      "通知がブラウザでブロックされています。\n" +
-      "ブラウザのサイト設定から通知を許可してください。"
-    );
-
-    return;
-  }
-
-  try {
-
-    const permission =
-      await Notification.requestPermission();
-
-    updateNotificationButton();
-
-    if (permission === "granted") {
-
-      alert(
-        "通知を許可しました！\n" +
-        "別のタブを見ている間に新着メッセージを通知します。"
-      );
-
-    } else {
-
-      alert("通知は許可されませんでした。");
-
-    }
-
-  } catch (error) {
-
-    console.error("通知許可エラー:", error);
-
-  }
+urlInput.addEventListener("keydown", function (event) {
+  if (event.key === "Enter") changeUrl();
 });
 
-// ========================================
-// タブタイトル更新
-// ========================================
 
-function updatePageTitle() {
+// ============================================================
+// 未読通知
+// ============================================================
+
+const BASE_TITLE = "カスタムチャットシステム Pro";
+
+let unreadCount = 0;
+let activeNotification = null;
+
+
+// 通知が利用できるか確認
+function canUseNotification() {
+  return (
+    "Notification" in window &&
+    window.isSecureContext
+  );
+}
+
+
+// 最初のクリックで通知許可を求める
+// UIのボタン追加は不要
+function requestNotificationPermission() {
+
+  if (!canUseNotification()) return;
+
+  if (Notification.permission !== "default") return;
+
+  try {
+    const result = Notification.requestPermission();
+
+    if (result && typeof result.catch === "function") {
+      result.catch(function (error) {
+        console.warn("通知許可エラー:", error);
+      });
+    }
+  } catch (error) {
+    console.warn("通知許可エラー:", error);
+  }
+}
+
+
+// チャット画面内で最初にクリックしたときだけ実行
+document.addEventListener(
+  "click",
+  requestNotificationPermission,
+  { once: true }
+);
+
+
+// タイトル更新
+function updateUnreadTitle() {
 
   if (unreadCount > 0) {
 
@@ -1210,57 +640,42 @@ function updatePageTitle() {
   }
 }
 
-// ========================================
-// 通知を閉じる
-// ========================================
 
-function closeActiveNotification() {
+// 古い通知を閉じる
+function closeUnreadNotification() {
 
   if (activeNotification) {
 
     try {
       activeNotification.close();
-    } catch (error) {
-      console.warn("通知を閉じられませんでした:", error);
-    }
+    } catch (error) {}
 
     activeNotification = null;
   }
 }
 
-// ========================================
-// 未読件数リセット
-// ========================================
 
-function clearUnreadCount() {
+// 未読リセット
+function resetUnreadCount() {
 
   unreadCount = 0;
 
-  updatePageTitle();
+  updateUnreadTitle();
 
-  closeActiveNotification();
+  closeUnreadNotification();
 }
 
-// ========================================
-// デスクトップ通知
-// ========================================
 
+// 通知表示
 function showUnreadNotification() {
 
-  if (!notificationSupported()) {
-    return;
-  }
+  if (!canUseNotification()) return;
 
-  if (Notification.permission !== "granted") {
-    return;
-  }
+  if (Notification.permission !== "granted") return;
 
-  if (unreadCount <= 0) {
-    return;
-  }
+  if (unreadCount <= 0) return;
 
-  // 前回の通知を閉じて件数を更新
-  closeActiveNotification();
+  closeUnreadNotification();
 
   try {
 
@@ -1280,238 +695,467 @@ function showUnreadNotification() {
 
     activeNotification = notification;
 
-    // 通知クリックでチャット画面へ
-    notification.onclick = () => {
+    notification.onclick = function () {
 
       window.focus();
 
-      clearUnreadCount();
+      resetUnreadCount();
 
       notification.close();
     };
 
-    notification.onclose = () => {
+    notification.onclose = function () {
 
       if (activeNotification === notification) {
         activeNotification = null;
       }
-
     };
 
   } catch (error) {
 
-    console.error("通知表示エラー:", error);
-
+    console.warn("通知表示エラー:", error);
   }
 }
 
-// ========================================
-// 新着メッセージの未読処理
-// ========================================
 
-function handleNewMessage(message) {
+// 新着メッセージの通知処理
+function handleUnreadMessage(data) {
 
-  // 自分の投稿は未読にしない
-  if (message.isSelf === true) {
-    return;
-  }
+  // 過去の履歴は通知しない
+  if (data.type !== "message") return;
 
-  // チャットタブを表示中なら未読にしない
-  if (!document.hidden) {
-    return;
-  }
+  // 自分の投稿は通知しない
+  if (data.isSelf === true) return;
+
+  // チャットタブが表示中なら通知しない
+  if (!document.hidden) return;
 
   unreadCount++;
 
-  updatePageTitle();
+  updateUnreadTitle();
 
   showUnreadNotification();
 }
 
-// ========================================
-// チャットタブへ戻ったとき
-// ========================================
 
-document.addEventListener("visibilitychange", () => {
+// チャットタブに戻ったら未読リセット
+document.addEventListener(
+  "visibilitychange",
+  function () {
 
-  if (!document.hidden) {
-
-    clearUnreadCount();
-
-  }
-});
-
-window.addEventListener("focus", () => {
-
-  if (!document.hidden) {
-
-    clearUnreadCount();
-
-  }
-});
-
-// 初期化
-updateNotificationButton();
-
-updatePageTitle();
-
-// ========================================
-// WebSocket接続
-// ========================================
-
-let socket = null;
-
-function connectWebSocket() {
-
-  const protocol =
-    location.protocol === "https:"
-      ? "wss:"
-      : "ws:";
-
-  const wsUrl =
-    protocol + "//" + location.host;
-
-  socket = new WebSocket(wsUrl);
-
-  socket.addEventListener("open", () => {
-
-    console.log("[WS] 接続成功");
-
-  });
-
-  socket.addEventListener("message", (event) => {
-
-    try {
-
-      const data = JSON.parse(event.data);
-
-      // ====================================
-      // 初期履歴
-      // ====================================
-
-      if (data.type === "history") {
-
-        addMessage(data);
-
-        // 過去の履歴では通知しない
-        return;
-      }
-
-      // ====================================
-      // 新規メッセージ
-      // ====================================
-
-      if (data.type === "message") {
-
-        addMessage(data);
-
-        handleNewMessage(data);
-
-        return;
-      }
-
-      // ====================================
-      // 旧形式との互換性
-      // ====================================
-
-      if (
-        typeof data.text === "string" &&
-        data.senderId !== undefined
-      ) {
-
-        addMessage(data);
-
-        // 種別が不明な旧形式では誤通知を防ぐ
-        return;
-      }
-
-    } catch (error) {
-
-      console.error(
-        "[WS] メッセージ解析エラー:",
-        error
-      );
-
+    if (!document.hidden) {
+      resetUnreadCount();
     }
-  });
+  }
+);
 
-  socket.addEventListener("close", () => {
 
-    console.log("[WS] 接続終了");
+window.addEventListener("focus", function () {
 
-    // 接続が切れた場合は再接続
-    setTimeout(() => {
+  if (!document.hidden) {
+    resetUnreadCount();
+  }
+});
 
-      connectWebSocket();
 
-    }, 3000);
+// ============================================================
+// WebSocket
+// ============================================================
 
-  });
+const protocol =
+  window.location.protocol === "https:" ? "wss:" : "ws:";
 
-  socket.addEventListener("error", (error) => {
+const ws = new WebSocket(
+  protocol + "//" + window.location.host
+);
 
-    console.error("[WS] 接続エラー:", error);
 
-  });
+// ============================================================
+// タイムスタンプ
+// ============================================================
+
+function getJapanDateParts(date) {
+
+  const parts = new Intl.DateTimeFormat(
+    "en-US",
+    {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }
+  ).formatToParts(date);
+
+  const result = {};
+
+  for (const part of parts) {
+    if (part.type !== "literal") {
+      result[part.type] = part.value;
+    }
+  }
+
+  return result;
 }
 
-connectWebSocket();
 
-// ========================================
-// メッセージ送信
-// ========================================
+function formatTimestamp(value) {
+
+  if (!value) return "";
+
+  const date = new Date(value);
+
+  if (isNaN(date.getTime())) return "";
+
+  const target = getJapanDateParts(date);
+  const now = getJapanDateParts(new Date());
+
+  if (
+    target.year === now.year &&
+    target.month === now.month &&
+    target.day === now.day
+  ) {
+    return target.hour + ":" + target.minute;
+  }
+
+  if (target.year === now.year) {
+    return (
+      target.month + "/" +
+      target.day + " " +
+      target.hour + ":" +
+      target.minute
+    );
+  }
+
+  return (
+    target.year + "/" +
+    target.month + "/" +
+    target.day + " " +
+    target.hour + ":" +
+    target.minute
+  );
+}
+
+
+// ============================================================
+// 画像URL判定
+// ============================================================
+
+function isImageUrl(url) {
+
+  try {
+
+    const parsed = new URL(url);
+
+    if (
+      parsed.protocol !== "http:" &&
+      parsed.protocol !== "https:"
+    ) return false;
+
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+
+    // 通常の画像拡張子
+    if (/\\.(png|jpg|jpeg|gif|webp|avif|bmp|svg)$/i.test(path)) {
+      return true;
+    }
+
+    // Bing画像
+    if (
+      host === "th.bing.com" &&
+      path.startsWith("/th/id/")
+    ) {
+      return true;
+    }
+
+    // Google画像のサムネイル
+    if (
+      host === "encrypted-tbn0.gstatic.com" ||
+      host === "encrypted-tbn1.gstatic.com" ||
+      host === "encrypted-tbn2.gstatic.com" ||
+      host === "encrypted-tbn3.gstatic.com"
+    ) {
+      return true;
+    }
+
+    // Googleusercontentの画像
+    if (
+      host.endsWith(".googleusercontent.com") &&
+      (
+        path.includes("/image") ||
+        path.includes("/photo")
+      )
+    ) {
+      return true;
+    }
+
+    // Discord CDN
+    if (
+      host === "cdn.discordapp.com" ||
+      host === "media.discordapp.net"
+    ) {
+      if (
+        path.includes("/attachments/") ||
+        path.includes("/icons/") ||
+        path.includes("/avatars/")
+      ) {
+        return true;
+      }
+    }
+
+    // Imgur直接画像
+    if (
+      host === "i.imgur.com"
+    ) {
+      return true;
+    }
+
+    return false;
+
+  } catch (error) {
+    return false;
+  }
+}
+
+
+// ============================================================
+// リンク・画像表示
+// ============================================================
+
+function appendRichText(container, text) {
+
+  const urlRegex = /https?:\\/\\/[^\\s<>"']+/gi;
+
+  let lastIndex = 0;
+  let match;
+
+  while ((match = urlRegex.exec(text)) !== null) {
+
+    if (match.index > lastIndex) {
+      container.appendChild(
+        document.createTextNode(
+          text.slice(lastIndex, match.index)
+        )
+      );
+    }
+
+    const url = match[0];
+
+    if (isImageUrl(url)) {
+
+      const imageContainer =
+        document.createElement("div");
+
+      imageContainer.className =
+        "chat-image-container";
+
+      const link =
+        document.createElement("a");
+
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+
+      const image =
+        document.createElement("img");
+
+      image.src = url;
+      image.className = "chat-image";
+      image.loading = "lazy";
+      image.alt = "チャット画像";
+
+      image.onerror = function () {
+
+        const fallback =
+          document.createElement("a");
+
+        fallback.href = url;
+        fallback.target = "_blank";
+        fallback.rel = "noopener noreferrer";
+        fallback.className = "chat-link";
+        fallback.textContent = "画像を開く";
+
+        link.replaceWith(fallback);
+      };
+
+      link.appendChild(image);
+      imageContainer.appendChild(link);
+      container.appendChild(imageContainer);
+
+    } else {
+
+      const link =
+        document.createElement("a");
+
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.className = "chat-link";
+      link.textContent = url;
+
+      container.appendChild(link);
+    }
+
+    lastIndex = urlRegex.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    container.appendChild(
+      document.createTextNode(
+        text.slice(lastIndex)
+      )
+    );
+  }
+}
+
+
+// ============================================================
+// 受信
+// ============================================================
+
+ws.onmessage = function (event) {
+
+  try {
+
+    const data = JSON.parse(event.data);
+
+    // 履歴終了などの制御メッセージは表示しない
+    if (
+      !data ||
+      typeof data.text !== "string"
+    ) {
+      return;
+    }
+
+    const li = document.createElement("li");
+
+    const sender = document.createElement("span");
+    sender.className = "sender";
+    sender.textContent =
+      "[" + (data.senderId || "ゲスト") + "]";
+
+    li.appendChild(sender);
+
+    if (data.timestamp) {
+
+      const timestamp =
+        document.createElement("span");
+
+      timestamp.className = "timestamp";
+      timestamp.textContent =
+        formatTimestamp(data.timestamp);
+
+      li.appendChild(timestamp);
+    }
+
+    const content =
+      document.createElement("div");
+
+    content.className = "chat-content";
+
+    appendRichText(
+      content,
+      String(data.text || "")
+    );
+
+    li.appendChild(content);
+    messages.appendChild(li);
+
+    while (messages.children.length > 30) {
+      messages.removeChild(
+        messages.firstChild
+      );
+    }
+
+    messages.scrollTop =
+      messages.scrollHeight;
+
+    // 新着メッセージだけ通知判定
+    handleUnreadMessage(data);
+
+  } catch (error) {
+
+    console.error("受信エラー:", error);
+  }
+};
+
+
+// ============================================================
+// WebSocket状態
+// ============================================================
+
+ws.onopen = function () {
+  console.log("WebSocket connected");
+};
+
+ws.onerror = function (error) {
+  console.error("WebSocket error:", error);
+};
+
+ws.onclose = function () {
+  console.log("WebSocket closed");
+};
+
+
+// ============================================================
+// 送信
+// ============================================================
 
 function sendMessage() {
 
   const text = chatInput.value.trim();
+  let name = nameInput.value.trim();
 
-  if (!text) {
+  if (!name) name = "ゲスト";
+  if (!text) return;
+
+  if (ws.readyState !== WebSocket.OPEN) {
+    console.error("WebSocket未接続");
     return;
   }
 
-  if (
-    !socket ||
-    socket.readyState !== WebSocket.OPEN
-  ) {
+  saveName();
 
-    alert(
-      "チャットサーバーに接続されていません。\n" +
-      "少し待ってから再度送信してください。"
-    );
-
-    return;
-  }
-
-  const name =
-    nameInput.value.trim() || "ゲスト";
-
-  const payload = {
-    text: text,
-    name: name
-  };
-
-  socket.send(
-    JSON.stringify(payload)
+  ws.send(
+    JSON.stringify({
+      text: text,
+      name: name
+    })
   );
 
   chatInput.value = "";
-
-  chatInput.focus();
 }
 
-sendButton.addEventListener(
-  "click",
-  sendMessage
-);
 
-chatInput.addEventListener("keydown", (event) => {
+sendBtn.addEventListener("click", sendMessage);
 
-  if (event.key === "Enter") {
-
-    event.preventDefault();
-
+chatInput.addEventListener("keydown", function (event) {
+  if (
+    event.key === "Enter" &&
+    !event.isComposing
+  ) {
     sendMessage();
+  }
+});
 
+
+// ============================================================
+// "/" shortcut
+// ============================================================
+
+window.addEventListener("keydown", function (event) {
+
+  if (
+    document.activeElement === chatInput ||
+    document.activeElement === urlInput ||
+    document.activeElement === nameInput
+  ) return;
+
+  if (event.key === "/") {
+    event.preventDefault();
+    chatInput.focus();
   }
 });
 
@@ -1522,67 +1166,284 @@ chatInput.addEventListener("keydown", (event) => {
   `);
 });
 
-// ========================================
-// サーバー起動
-// ========================================
 
-const server = app.listen(port, () => {
+// ============================================================
+// HTTP SERVER
+// ============================================================
 
+const server = app.listen(port, function () {
+
+  console.log("========================================");
   console.log("ChatServer 起動");
-  console.log("Server running on port " + port);
+  console.log("PORT: " + port);
+  console.log("========================================");
 
-  // 起動時に履歴取得
   loadHistoryFromGAS();
-
 });
 
-// ========================================
-// WebSocketサーバー
-// ========================================
+
+// ============================================================
+// WEBSOCKET SERVER
+// ============================================================
 
 const wss = new WebSocketServer({
   server: server
 });
 
-// ========================================
-// WebSocket送信
-// ========================================
 
-function sendJSON(ws, data) {
+// ============================================================
+// GAS GET
+// ============================================================
 
-  if (ws.readyState !== WebSocket.OPEN) {
+async function loadHistoryFromGAS() {
+
+  if (historyLoaded) {
+    console.log("[GAS GET] 履歴はロード済みです");
     return;
   }
 
+  if (historyLoadingPromise) {
+    console.log("[GAS GET] 現在ロード中です");
+    return historyLoadingPromise;
+  }
+
+  historyLoadingPromise = (async function () {
+
+    try {
+
+      console.log("========================================");
+      console.log("[GAS GET] 接続開始");
+      console.log("[GAS GET] URL: " + GAS_DEPLOY_URL);
+
+      const response = await fetch(
+        GAS_DEPLOY_URL + "?action=read",
+        {
+          method: "GET",
+          redirect: "follow",
+          cache: "no-store"
+        }
+      );
+
+      console.log(
+        "[GAS GET] HTTP STATUS: " +
+        response.status
+      );
+
+      console.log(
+        "[GAS GET] FINAL URL: " +
+        response.url
+      );
+
+      const body = await response.text();
+
+      if (!response.ok) {
+        throw new Error(
+          "HTTP " + response.status + " / " + body
+        );
+      }
+
+      let data;
+
+      try {
+        data = JSON.parse(body);
+      } catch (error) {
+        throw new Error(
+          "GAS response is not JSON: " + body
+        );
+      }
+
+      if (!Array.isArray(data)) {
+        throw new Error(
+          "GAS response is not an array"
+        );
+      }
+
+      // GAS読み込み中に受信した新着を保持
+      const currentMessages = chatHistory.slice();
+
+      chatHistory.length = 0;
+
+      data.forEach(function (message) {
+
+        if (!message) return;
+
+        chatHistory.push({
+          text:
+            message.text == null
+              ? ""
+              : String(message.text),
+
+          senderId:
+            message.sender_id == null ||
+            message.sender_id === ""
+              ? "ゲスト"
+              : String(message.sender_id),
+
+          timestamp:
+            message.timestamp || null
+        });
+      });
+
+      // 読み込み中の新着を復元
+      for (const message of currentMessages) {
+
+        const exists = chatHistory.some(function (item) {
+          return (
+            item.timestamp === message.timestamp &&
+            item.text === message.text &&
+            item.senderId === message.senderId
+          );
+        });
+
+        if (!exists) {
+          chatHistory.push(message);
+        }
+      }
+
+      while (chatHistory.length > MAX_HISTORY) {
+        chatHistory.shift();
+      }
+
+      historyLoaded = true;
+
+      console.log("[GAS GET] 成功");
+      console.log(
+        "[GAS GET] 履歴件数: " +
+        chatHistory.length
+      );
+      console.log("========================================");
+
+    } catch (error) {
+
+      historyLoaded = false;
+
+      console.error("!!!!!!!! GAS GET ERROR !!!!!!!!");
+      console.error(error);
+      console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+
+    } finally {
+
+      historyLoadingPromise = null;
+    }
+  })();
+
+  return historyLoadingPromise;
+}
+
+
+// ============================================================
+// GAS POST
+// ============================================================
+
+async function saveMessageToGAS(message) {
+
   try {
 
-    ws.send(
-      JSON.stringify(data)
+    const payload = {
+      action: "write",
+      text: message.text,
+      sender_id: message.senderId,
+      timestamp: message.timestamp
+    };
+
+    console.log("[GAS POST] 保存開始");
+    console.log(
+      "[GAS POST] DATA: " +
+      JSON.stringify(payload)
     );
+
+    const response = await fetch(
+      GAS_DEPLOY_URL,
+      {
+        method: "POST",
+        redirect: "follow",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    console.log(
+      "[GAS POST] HTTP STATUS: " +
+      response.status
+    );
+
+    console.log(
+      "[GAS POST] FINAL URL: " +
+      response.url
+    );
+
+    const responseBody = await response.text();
+
+    console.log(
+      "[GAS POST] RESPONSE: " +
+      responseBody
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        "HTTP " + response.status +
+        ": " + responseBody
+      );
+    }
+
+    let result;
+
+    try {
+      result = JSON.parse(responseBody);
+    } catch (error) {
+      throw new Error(
+        "GAS POST response is not JSON: " +
+        responseBody
+      );
+    }
+
+    if (!result || result.ok !== true) {
+      throw new Error(
+        result && result.error
+          ? result.error
+          : "GAS save failed"
+      );
+    }
+
+    console.log(
+      "[GAS POST] スプレッドシート保存成功"
+    );
+
+    return true;
 
   } catch (error) {
 
-    console.error("[WS] 送信エラー:", error.message);
+    console.error("!!!!!!!! GAS POST ERROR !!!!!!!!");
+    console.error(error);
+    console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 
+    return false;
   }
 }
 
-// ========================================
-// メッセージ受信
-// ========================================
 
-wss.on("connection", async (ws) => {
+// ============================================================
+// WEBSOCKET CONNECTION
+// ============================================================
+
+wss.on("connection", async function (ws) {
 
   console.log("[WS] Client connected");
 
-  // この接続の履歴送信が終わるまで、
-  // 新着メッセージを一時的に保留する。
-  // これにより履歴と新着を区別しやすくする。
+  // 初期履歴と新着を区別するための状態
   let initialHistorySent = false;
 
+  // 履歴送信前に届いた新着を一時保存
   const pendingMessages = [];
 
-  function sendOrQueue(data) {
+  // この接続にメッセージを送信
+  function sendToThisClient(data) {
+
+    if (ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
 
     if (!initialHistorySent) {
 
@@ -1590,42 +1451,47 @@ wss.on("connection", async (ws) => {
 
     } else {
 
-      sendJSON(ws, data);
+      ws.send(JSON.stringify(data));
 
     }
   }
 
-  // ======================================
-  // メッセージ受信
-  // ======================================
+  // 他の接続からも使えるように登録
+  ws.chatSend = sendToThisClient;
 
-  ws.on("message", (rawData) => {
+
+  // ==========================================================
+  // メッセージ受信
+  // ==========================================================
+
+  ws.on("message", async function (rawMessage) {
 
     try {
 
-      const data = JSON.parse(
-        rawData.toString()
-      );
+      const clientData =
+        JSON.parse(rawMessage.toString());
+
+      let text = "";
 
       if (
-        !data ||
-        typeof data.text !== "string"
+        clientData &&
+        typeof clientData.text === "string"
       ) {
-        return;
+        text = clientData.text.trim();
       }
 
-      const text = data.text.trim();
+      if (!text) return;
 
-      if (!text) {
-        return;
+      let senderId = "ゲスト";
+
+      if (
+        typeof clientData.name === "string" &&
+        clientData.name.trim()
+      ) {
+        senderId =
+          clientData.name.trim().slice(0, 10);
       }
 
-      const senderId =
-        typeof data.name === "string"
-          ? data.name.trim().slice(0, 30) || "ゲスト"
-          : "ゲスト";
-
-      // タイムスタンプは一度だけ生成
       const timestamp =
         new Date().toISOString();
 
@@ -1635,137 +1501,126 @@ wss.on("connection", async (ws) => {
         timestamp: timestamp
       };
 
-      // ====================================
-      // 履歴に追加
-      // ====================================
+      console.log(
+        "[CHAT] NEW: " +
+        JSON.stringify(message)
+      );
 
       chatHistory.push(message);
 
-      if (chatHistory.length > MAX_HISTORY) {
+      while (chatHistory.length > MAX_HISTORY) {
         chatHistory.shift();
       }
 
-      // ====================================
-      // 全ユーザーに配信
-      // ====================================
-
-      wss.clients.forEach((client) => {
+      // 全員に新着として送信
+      wss.clients.forEach(function (client) {
 
         if (client.readyState !== WebSocket.OPEN) {
           return;
         }
 
-        sendToClient(client, {
+        const outgoingMessage = {
           type: "message",
           text: message.text,
           senderId: message.senderId,
           timestamp: message.timestamp,
 
-          // 名前ではなく送信元の接続で判定
+          // 同名ユーザーでも正確に自分を判定
           isSelf: client === ws
-        });
+        };
 
+        if (typeof client.chatSend === "function") {
+
+          client.chatSend(outgoingMessage);
+
+        } else {
+
+          client.send(
+            JSON.stringify(outgoingMessage)
+          );
+        }
       });
 
-      // ====================================
-      // GASへ永久保存
-      // ====================================
-
-      saveMessageToGAS(message);
+      await saveMessageToGAS(message);
 
     } catch (error) {
 
       console.error(
-        "[WS] 受信エラー:",
-        error.message
+        "[WS] Message error:",
+        error
       );
-
     }
   });
 
-  // ======================================
-  // この接続への送信
-  // ======================================
 
-  function sendToClient(client, data) {
-
-    // 自分の接続なら初期履歴完了まで保留
-    if (client === ws) {
-
-      sendOrQueue(data);
-
-    } else {
-
-      // 他の接続も初期化中の可能性があるため、
-      // 各接続に登録した送信関数を使う
-      if (typeof client.chatSend === "function") {
-
-        client.chatSend(data);
-
-      } else {
-
-        sendJSON(client, data);
-
-      }
-    }
-  }
-
-  ws.chatSend = sendOrQueue;
-
-  // ======================================
+  // ==========================================================
   // 初期履歴送信
-  // ======================================
+  // ==========================================================
 
   try {
 
-    await loadHistoryFromGAS();
+    if (!historyLoaded) {
+      await loadHistoryFromGAS();
+    }
 
-    // 接続がすでに閉じていたら終了
     if (ws.readyState !== WebSocket.OPEN) {
       return;
     }
 
-    // 履歴読み込み中に届いた新着との重複を
-    // 避けるため、保留した新着を確認する
+    // 履歴読み込み中に受信した新着との重複を防ぐ
     const pendingTimestamps = new Set(
       pendingMessages
-        .filter((item) => item.type === "message")
-        .map((item) => item.timestamp)
+        .filter(function (item) {
+          return item.type === "message";
+        })
+        .map(function (item) {
+          return item.timestamp;
+        })
     );
 
     const initialMessages = chatHistory.filter(
-      (message) => {
+      function (message) {
+
         return !pendingTimestamps.has(
           message.timestamp
         );
       }
     );
 
-    // 過去30件を通知対象外として送る
-    for (const message of initialMessages) {
-
-      sendJSON(ws, {
-        type: "history",
-        text: message.text,
-        senderId: message.senderId,
-        timestamp: message.timestamp
-      });
-
-    }
-
     console.log(
-      "[WS] 履歴を送信:",
+      "[WS] 履歴を送信: " +
       initialMessages.length + "件"
     );
 
-    // 初期履歴完了
+    // 過去の履歴として送信
+    for (const message of initialMessages) {
+
+      if (ws.readyState !== WebSocket.OPEN) {
+        break;
+      }
+
+      ws.send(
+        JSON.stringify({
+          type: "history",
+          text: message.text,
+          senderId: message.senderId,
+          timestamp: message.timestamp
+        })
+      );
+    }
+
+    // 初期履歴送信完了
     initialHistorySent = true;
 
-    // 初期化中に届いた新着を送信
+    // 待機していた新着を配信
     for (const message of pendingMessages) {
 
-      sendJSON(ws, message);
+      if (ws.readyState === WebSocket.OPEN) {
 
+        ws.send(
+          JSON.stringify(message)
+        );
+      }
     }
 
     pendingMessages.length = 0;
@@ -1773,19 +1628,36 @@ wss.on("connection", async (ws) => {
   } catch (error) {
 
     console.error(
-      "[WS] 履歴送信エラー:",
-      error.message
+      "[WS] History error:",
+      error
     );
 
     initialHistorySent = true;
 
     for (const message of pendingMessages) {
 
-      sendJSON(ws, message);
+      if (ws.readyState === WebSocket.OPEN) {
 
+        ws.send(
+          JSON.stringify(message)
+        );
+      }
     }
 
     pendingMessages.length = 0;
   }
+
+
+  // ==========================================================
+  // 切断・エラー
+  // ==========================================================
+
+  ws.on("close", function () {
+    console.log("[WS] Client disconnected");
+  });
+
+  ws.on("error", function (error) {
+    console.error("[WS] Error:", error);
+  });
 
 });
