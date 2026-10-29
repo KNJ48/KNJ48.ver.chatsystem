@@ -1,18 +1,7 @@
 // ============================================================
 // chatserver.js
-// Render + WebSocket + Google Apps Script + Spreadsheet
-//
-// 機能:
-// ・リアルタイムチャット
-// ・Google Spreadsheet永久保存
-// ・最新30件の履歴復元
-// ・日本時間タイムスタンプ
-// ・日付に応じた時刻表示
-// ・チャットボックスのドラッグ移動
-// ・名前の自動保存
-// ・チャット位置の保存
-// ・URL自動リンク化
-// ・画像URLの埋め込み表示
+// Render + WebSocket + GAS + Spreadsheet
+// URLリンク化・画像埋め込み対応版
 // ============================================================
 
 const express = require("express");
@@ -21,18 +10,8 @@ const { WebSocketServer, WebSocket } = require("ws");
 const app = express();
 const port = process.env.PORT || 3000;
 
-
-// ============================================================
-// GAS設定
-// ============================================================
-
 const GAS_DEPLOY_URL =
   "https://script.google.com/macros/s/AKfycbxvqp1PutymnKwjSzUBnDR3QXz498J2Ba1TrwYrMlBGd-66VmxH_PRoFAfXChDHFfv0Bg/exec";
-
-
-// ============================================================
-// HISTORY
-// ============================================================
 
 const chatHistory = [];
 const MAX_HISTORY = 30;
@@ -52,20 +31,13 @@ app.get("/", function (req, res) {
 <html lang="ja">
 
 <head>
-
 <meta charset="UTF-8">
-
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1.0"
->
-
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>カスタムチャットシステム Pro</title>
 
 <style>
 
-html,
-body {
+html, body {
   margin: 0;
   padding: 0;
   width: 100%;
@@ -98,9 +70,7 @@ body {
   border: 1px solid rgba(255,255,255,0.1);
   border-radius: 6px;
   box-shadow: 0 4px 10px rgba(0,0,0,0.4);
-  transition:
-    opacity 0.5s ease,
-    transform 0.5s ease;
+  transition: opacity 0.5s ease, transform 0.5s ease;
 }
 
 .bar-group {
@@ -175,10 +145,8 @@ body {
   border-bottom: 1px solid rgba(255,255,255,0.08);
   color: rgba(255,255,255,0.45);
   font-size: 14px;
-  line-height: 20px;
   cursor: grab;
   user-select: none;
-  -webkit-user-select: none;
   touch-action: none;
 }
 
@@ -227,8 +195,6 @@ body {
   font-size: 10px;
 }
 
-/* URLリンク */
-
 .chat-link {
   color: #64b5f6;
   text-decoration: underline;
@@ -239,7 +205,10 @@ body {
   color: #90caf9;
 }
 
-/* 画像 */
+.chat-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 .chat-image-container {
   margin-top: 7px;
@@ -256,12 +225,6 @@ body {
   object-fit: contain;
   cursor: pointer;
   background: rgba(255,255,255,0.05);
-}
-
-.chat-image-text {
-  margin-top: 5px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 #input-area {
@@ -297,7 +260,6 @@ body {
 }
 
 </style>
-
 </head>
 
 <body>
@@ -305,74 +267,38 @@ body {
 <div id="top-bar-container">
 
   <div class="bar-group">
-
     <span class="bar-label">URL:</span>
-
-    <input
-      type="text"
-      id="url-input"
-      value="https://example.com"
-    >
-
+    <input type="text" id="url-input" value="https://example.com">
     <button id="url-btn">移動</button>
-
   </div>
 
-  <div
-    class="bar-group"
-    style="
-      margin-left:5px;
-      border-left:1px solid rgba(255,255,255,0.2);
-      padding-left:10px;
-    "
-  >
-
+  <div class="bar-group"
+    style="margin-left:5px;border-left:1px solid rgba(255,255,255,0.2);padding-left:10px;">
     <span class="bar-label">NAME:</span>
-
-    <input
-      type="text"
-      id="name-input"
-      value="ゲスト"
-      maxlength="10"
-    >
-
+    <input type="text" id="name-input" value="ゲスト" maxlength="10">
   </div>
 
 </div>
 
-
-<iframe
-  id="game-area"
-  src="https://example.com"
-></iframe>
-
+<iframe id="game-area" src="https://example.com"></iframe>
 
 <div id="chat-container">
 
-  <div
-    id="chat-drag-bar"
-    title="ドラッグして移動"
-  >
-    ⋮⋮⋮
-  </div>
+  <div id="chat-drag-bar" title="ドラッグして移動">⋮⋮⋮</div>
 
   <ul id="messages"></ul>
 
   <div id="input-area">
-
     <input
       type="text"
       id="chat-input"
       placeholder="チャットを開始..."
       autocomplete="off"
     >
-
     <button id="send-btn">送信</button>
-
   </div>
 
 </div>
-
 
 <script>
 
@@ -380,88 +306,50 @@ body {
 // DOM
 // ============================================================
 
-const gameArea =
-  document.getElementById("game-area");
+const gameArea = document.getElementById("game-area");
+const urlInput = document.getElementById("url-input");
+const urlBtn = document.getElementById("url-btn");
+const nameInput = document.getElementById("name-input");
+const topBar = document.getElementById("top-bar-container");
 
-const urlInput =
-  document.getElementById("url-input");
+const chatContainer = document.getElementById("chat-container");
+const chatDragBar = document.getElementById("chat-drag-bar");
 
-const urlBtn =
-  document.getElementById("url-btn");
-
-const nameInput =
-  document.getElementById("name-input");
-
-const topBar =
-  document.getElementById("top-bar-container");
-
-const chatContainer =
-  document.getElementById("chat-container");
-
-const chatDragBar =
-  document.getElementById("chat-drag-bar");
-
-const messages =
-  document.getElementById("messages");
-
-const chatInput =
-  document.getElementById("chat-input");
-
-const sendBtn =
-  document.getElementById("send-btn");
+const messages = document.getElementById("messages");
+const chatInput = document.getElementById("chat-input");
+const sendBtn = document.getElementById("send-btn");
 
 
 // ============================================================
 // localStorage
 // ============================================================
 
-const STORAGE_NAME_KEY =
-  "chatserver_saved_name";
+const STORAGE_NAME_KEY = "chatserver_saved_name";
+const STORAGE_POSITION_KEY = "chatserver_saved_position";
 
-const STORAGE_POSITION_KEY =
-  "chatserver_saved_position";
-
-
-// ============================================================
-// 名前保存
-// ============================================================
 
 function loadSavedName() {
-
   try {
-
-    const saved =
-      localStorage.getItem(
-        STORAGE_NAME_KEY
-      );
-
+    const saved = localStorage.getItem(STORAGE_NAME_KEY);
     nameInput.value =
       saved && saved.trim()
         ? saved.slice(0, 10)
         : "ゲスト";
-
   } catch (error) {
-
     nameInput.value = "ゲスト";
   }
 }
 
 
 function saveName() {
-
-  const name =
-    nameInput.value.trim() ||
-    "ゲスト";
+  const name = nameInput.value.trim() || "ゲスト";
 
   try {
-
     localStorage.setItem(
       STORAGE_NAME_KEY,
       name.slice(0, 10)
     );
-
   } catch (error) {
-
     console.warn(error);
   }
 }
@@ -469,35 +357,23 @@ function saveName() {
 
 loadSavedName();
 
-nameInput.addEventListener(
-  "input",
-  saveName
-);
+nameInput.addEventListener("input", saveName);
 
-nameInput.addEventListener(
-  "change",
-  function () {
-
-    if (!nameInput.value.trim()) {
-      nameInput.value = "ゲスト";
-    }
-
-    saveName();
+nameInput.addEventListener("change", function () {
+  if (!nameInput.value.trim()) {
+    nameInput.value = "ゲスト";
   }
-);
+  saveName();
+});
 
 
 // ============================================================
-// チャット位置保存
+// 位置保存
 // ============================================================
 
 function saveChatPosition() {
-
   try {
-
-    const rect =
-      chatContainer.getBoundingClientRect();
-
+    const rect = chatContainer.getBoundingClientRect();
     localStorage.setItem(
       STORAGE_POSITION_KEY,
       JSON.stringify({
@@ -505,73 +381,44 @@ function saveChatPosition() {
         y: rect.top
       })
     );
-
   } catch (error) {
-
     console.warn(error);
   }
 }
 
 
 function loadChatPosition() {
-
   try {
-
-    const saved =
-      localStorage.getItem(
-        STORAGE_POSITION_KEY
-      );
+    const saved = localStorage.getItem(STORAGE_POSITION_KEY);
 
     if (!saved) return;
 
-    const position =
-      JSON.parse(saved);
+    const position = JSON.parse(saved);
 
     if (
       !Number.isFinite(position.x) ||
       !Number.isFinite(position.y)
     ) return;
 
-    const maxX =
-      Math.max(
-        0,
-        window.innerWidth -
-        chatContainer.offsetWidth
-      );
+    const maxX = Math.max(
+      0,
+      window.innerWidth - chatContainer.offsetWidth
+    );
 
-    const maxY =
-      Math.max(
-        0,
-        window.innerHeight -
-        chatContainer.offsetHeight
-      );
+    const maxY = Math.max(
+      0,
+      window.innerHeight - chatContainer.offsetHeight
+    );
 
-    const x =
-      Math.max(
-        0,
-        Math.min(position.x, maxX)
-      );
+    const x = Math.max(0, Math.min(position.x, maxX));
+    const y = Math.max(0, Math.min(position.y, maxY));
 
-    const y =
-      Math.max(
-        0,
-        Math.min(position.y, maxY)
-      );
-
-    chatContainer.style.left =
-      x + "px";
-
-    chatContainer.style.top =
-      y + "px";
-
-    chatContainer.style.right =
-      "auto";
-
-    chatContainer.style.bottom =
-      "auto";
+    chatContainer.style.left = x + "px";
+    chatContainer.style.top = y + "px";
+    chatContainer.style.right = "auto";
+    chatContainer.style.bottom = "auto";
 
   } catch (error) {
-
     console.warn(error);
   }
 }
@@ -589,100 +436,64 @@ let dragOffsetX = 0;
 let dragOffsetY = 0;
 
 
-chatDragBar.addEventListener(
-  "pointerdown",
-  function (event) {
+chatDragBar.addEventListener("pointerdown", function (event) {
 
-    if (
-      event.pointerType === "mouse" &&
-      event.button !== 0
-    ) return;
+  if (
+    event.pointerType === "mouse" &&
+    event.button !== 0
+  ) return;
 
-    event.preventDefault();
+  event.preventDefault();
 
-    const rect =
-      chatContainer.getBoundingClientRect();
+  const rect = chatContainer.getBoundingClientRect();
 
-    dragOffsetX =
-      event.clientX - rect.left;
+  dragOffsetX = event.clientX - rect.left;
+  dragOffsetY = event.clientY - rect.top;
 
-    dragOffsetY =
-      event.clientY - rect.top;
+  chatContainer.style.left = rect.left + "px";
+  chatContainer.style.top = rect.top + "px";
+  chatContainer.style.right = "auto";
+  chatContainer.style.bottom = "auto";
 
-    chatContainer.style.left =
-      rect.left + "px";
+  isDragging = true;
 
-    chatContainer.style.top =
-      rect.top + "px";
+  chatDragBar.classList.add("dragging");
 
-    chatContainer.style.right =
-      "auto";
-
-    chatContainer.style.bottom =
-      "auto";
-
-    isDragging = true;
-
-    chatDragBar.classList.add(
-      "dragging"
-    );
-
-    try {
-      chatDragBar.setPointerCapture(
-        event.pointerId
-      );
-    } catch (error) {}
-  }
-);
+  try {
+    chatDragBar.setPointerCapture(event.pointerId);
+  } catch (error) {}
+});
 
 
-chatDragBar.addEventListener(
-  "pointermove",
-  function (event) {
+chatDragBar.addEventListener("pointermove", function (event) {
 
-    if (!isDragging) return;
+  if (!isDragging) return;
 
-    event.preventDefault();
+  event.preventDefault();
 
-    const maxX =
-      Math.max(
-        0,
-        window.innerWidth -
-        chatContainer.offsetWidth
-      );
+  const maxX = Math.max(
+    0,
+    window.innerWidth - chatContainer.offsetWidth
+  );
 
-    const maxY =
-      Math.max(
-        0,
-        window.innerHeight -
-        chatContainer.offsetHeight
-      );
+  const maxY = Math.max(
+    0,
+    window.innerHeight - chatContainer.offsetHeight
+  );
 
-    const x =
-      Math.max(
-        0,
-        Math.min(
-          event.clientX - dragOffsetX,
-          maxX
-        )
-      );
+  const x = Math.max(
+    0,
+    Math.min(event.clientX - dragOffsetX, maxX)
+  );
 
-    const y =
-      Math.max(
-        0,
-        Math.min(
-          event.clientY - dragOffsetY,
-          maxY
-        )
-      );
+  const y = Math.max(
+    0,
+    Math.min(event.clientY - dragOffsetY, maxY)
+  );
 
-    chatContainer.style.left =
-      x + "px";
-
-    chatContainer.style.top =
-      y + "px";
-  }
-);
+  chatContainer.style.left = x + "px";
+  chatContainer.style.top = y + "px";
+});
 
 
 function finishDragging(event) {
@@ -690,72 +501,44 @@ function finishDragging(event) {
   if (!isDragging) return;
 
   isDragging = false;
-
-  chatDragBar.classList.remove(
-    "dragging"
-  );
+  chatDragBar.classList.remove("dragging");
 
   try {
-    chatDragBar.releasePointerCapture(
-      event.pointerId
-    );
+    chatDragBar.releasePointerCapture(event.pointerId);
   } catch (error) {}
 
   saveChatPosition();
 }
 
 
-chatDragBar.addEventListener(
-  "pointerup",
-  finishDragging
-);
-
-chatDragBar.addEventListener(
-  "pointercancel",
-  finishDragging
-);
+chatDragBar.addEventListener("pointerup", finishDragging);
+chatDragBar.addEventListener("pointercancel", finishDragging);
 
 
-// ============================================================
-// リサイズ
-// ============================================================
+window.addEventListener("resize", function () {
 
-window.addEventListener(
-  "resize",
-  function () {
+  if (!chatContainer.style.left) return;
 
-    if (!chatContainer.style.left) return;
+  const rect = chatContainer.getBoundingClientRect();
 
-    const rect =
-      chatContainer.getBoundingClientRect();
+  const maxX = Math.max(
+    0,
+    window.innerWidth - rect.width
+  );
 
-    const maxX =
-      Math.max(
-        0,
-        window.innerWidth - rect.width
-      );
+  const maxY = Math.max(
+    0,
+    window.innerHeight - rect.height
+  );
 
-    const maxY =
-      Math.max(
-        0,
-        window.innerHeight - rect.height
-      );
+  chatContainer.style.left =
+    Math.max(0, Math.min(rect.left, maxX)) + "px";
 
-    chatContainer.style.left =
-      Math.max(
-        0,
-        Math.min(rect.left, maxX)
-      ) + "px";
+  chatContainer.style.top =
+    Math.max(0, Math.min(rect.top, maxY)) + "px";
 
-    chatContainer.style.top =
-      Math.max(
-        0,
-        Math.min(rect.top, maxY)
-      ) + "px";
-
-    saveChatPosition();
-  }
-);
+  saveChatPosition();
+});
 
 
 // ============================================================
@@ -777,10 +560,8 @@ function changeUrl() {
   }
 
   gameArea.src = url;
-
   topBar.style.opacity = "0";
-  topBar.style.transform =
-    "translateY(-20px)";
+  topBar.style.transform = "translateY(-20px)";
 
   setTimeout(function () {
     topBar.style.display = "none";
@@ -788,17 +569,11 @@ function changeUrl() {
 }
 
 
-urlBtn.addEventListener(
-  "click",
-  changeUrl
-);
+urlBtn.addEventListener("click", changeUrl);
 
-urlInput.addEventListener(
-  "keydown",
-  function (event) {
-    if (event.key === "Enter") changeUrl();
-  }
-);
+urlInput.addEventListener("keydown", function (event) {
+  if (event.key === "Enter") changeUrl();
+});
 
 
 // ============================================================
@@ -806,9 +581,7 @@ urlInput.addEventListener(
 // ============================================================
 
 const protocol =
-  window.location.protocol === "https:"
-    ? "wss:"
-    : "ws:";
+  window.location.protocol === "https:" ? "wss:" : "ws:";
 
 const ws = new WebSocket(
   protocol + "//" + window.location.host
@@ -816,24 +589,23 @@ const ws = new WebSocket(
 
 
 // ============================================================
-// 日本時間
+// タイムスタンプ
 // ============================================================
 
 function getJapanDateParts(date) {
 
-  const parts =
-    new Intl.DateTimeFormat(
-      "en-US",
-      {
-        timeZone: "Asia/Tokyo",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23"
-      }
-    ).formatToParts(date);
+  const parts = new Intl.DateTimeFormat(
+    "en-US",
+    {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }
+  ).formatToParts(date);
 
   const result = {};
 
@@ -886,7 +658,7 @@ function formatTimestamp(value) {
 
 
 // ============================================================
-// URL判定
+// 画像URL判定
 // ============================================================
 
 function isImageUrl(url) {
@@ -898,11 +670,67 @@ function isImageUrl(url) {
     if (
       parsed.protocol !== "http:" &&
       parsed.protocol !== "https:"
-    ) {
-      return false;
+    ) return false;
+
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+
+    // 通常の画像拡張子
+    if (/\\.(png|jpg|jpeg|gif|webp|avif|bmp|svg)$/i.test(path)) {
+      return true;
     }
 
-    return /\\.(png|jpg|jpeg|gif|webp|avif|bmp)(?:$|[?#])/i.test(url);
+    // Bing画像
+    if (
+      host === "th.bing.com" &&
+      path.startsWith("/th/id/")
+    ) {
+      return true;
+    }
+
+    // Google画像のサムネイル
+    if (
+      host === "encrypted-tbn0.gstatic.com" ||
+      host === "encrypted-tbn1.gstatic.com" ||
+      host === "encrypted-tbn2.gstatic.com" ||
+      host === "encrypted-tbn3.gstatic.com"
+    ) {
+      return true;
+    }
+
+    // Googleusercontentの画像
+    if (
+      host.endsWith(".googleusercontent.com") &&
+      (
+        path.includes("/image") ||
+        path.includes("/photo")
+      )
+    ) {
+      return true;
+    }
+
+    // Discord CDN
+    if (
+      host === "cdn.discordapp.com" ||
+      host === "media.discordapp.net"
+    ) {
+      if (
+        path.includes("/attachments/") ||
+        path.includes("/icons/") ||
+        path.includes("/avatars/")
+      ) {
+        return true;
+      }
+    }
+
+    // Imgur直接画像
+    if (
+      host === "i.imgur.com"
+    ) {
+      return true;
+    }
+
+    return false;
 
   } catch (error) {
     return false;
@@ -911,21 +739,19 @@ function isImageUrl(url) {
 
 
 // ============================================================
-// テキストをリンク・画像に変換
+// リンク・画像表示
 // ============================================================
 
 function appendRichText(container, text) {
 
-  const urlRegex = /https?:\\/\\/[^\\s<> "'\`]+/gi;
+  const urlRegex = /https?:\\/\\/[^\\s<>"']+/gi;
 
   let lastIndex = 0;
   let match;
 
   while ((match = urlRegex.exec(text)) !== null) {
 
-    // URLより前の文章
     if (match.index > lastIndex) {
-
       container.appendChild(
         document.createTextNode(
           text.slice(lastIndex, match.index)
@@ -959,11 +785,17 @@ function appendRichText(container, text) {
       image.alt = "チャット画像";
 
       image.onerror = function () {
-        image.replaceWith(
-          document.createTextNode(
-            "画像を表示できません"
-          )
-        );
+
+        const fallback =
+          document.createElement("a");
+
+        fallback.href = url;
+        fallback.target = "_blank";
+        fallback.rel = "noopener noreferrer";
+        fallback.className = "chat-link";
+        fallback.textContent = "画像を開く";
+
+        link.replaceWith(fallback);
       };
 
       link.appendChild(image);
@@ -987,9 +819,7 @@ function appendRichText(container, text) {
     lastIndex = urlRegex.lastIndex;
   }
 
-  // 残りの文章
   if (lastIndex < text.length) {
-
     container.appendChild(
       document.createTextNode(
         text.slice(lastIndex)
@@ -1000,7 +830,7 @@ function appendRichText(container, text) {
 
 
 // ============================================================
-// メッセージ受信
+// 受信
 // ============================================================
 
 ws.onmessage = function (event) {
@@ -1009,12 +839,9 @@ ws.onmessage = function (event) {
 
     const data = JSON.parse(event.data);
 
-    const li =
-      document.createElement("li");
+    const li = document.createElement("li");
 
-    const sender =
-      document.createElement("span");
-
+    const sender = document.createElement("span");
     sender.className = "sender";
     sender.textContent =
       "[" + (data.senderId || "ゲスト") + "]";
@@ -1044,7 +871,6 @@ ws.onmessage = function (event) {
     );
 
     li.appendChild(content);
-
     messages.appendChild(li);
 
     while (messages.children.length > 30) {
@@ -1058,10 +884,7 @@ ws.onmessage = function (event) {
 
   } catch (error) {
 
-    console.error(
-      "受信エラー:",
-      error
-    );
+    console.error("受信エラー:", error);
   }
 };
 
@@ -1090,7 +913,6 @@ ws.onclose = function () {
 function sendMessage() {
 
   const text = chatInput.value.trim();
-
   let name = nameInput.value.trim();
 
   if (!name) name = "ゲスト";
@@ -1114,44 +936,35 @@ function sendMessage() {
 }
 
 
-sendBtn.addEventListener(
-  "click",
-  sendMessage
-);
+sendBtn.addEventListener("click", sendMessage);
 
-chatInput.addEventListener(
-  "keydown",
-  function (event) {
-    if (
-      event.key === "Enter" &&
-      !event.isComposing
-    ) {
-      sendMessage();
-    }
+chatInput.addEventListener("keydown", function (event) {
+  if (
+    event.key === "Enter" &&
+    !event.isComposing
+  ) {
+    sendMessage();
   }
-);
+});
 
 
 // ============================================================
 // "/" shortcut
 // ============================================================
 
-window.addEventListener(
-  "keydown",
-  function (event) {
+window.addEventListener("keydown", function (event) {
 
-    if (
-      document.activeElement === chatInput ||
-      document.activeElement === urlInput ||
-      document.activeElement === nameInput
-    ) return;
+  if (
+    document.activeElement === chatInput ||
+    document.activeElement === urlInput ||
+    document.activeElement === nameInput
+  ) return;
 
-    if (event.key === "/") {
-      event.preventDefault();
-      chatInput.focus();
-    }
+  if (event.key === "/") {
+    event.preventDefault();
+    chatInput.focus();
   }
-);
+});
 
 </script>
 
