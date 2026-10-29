@@ -4,20 +4,21 @@
 //
 // 機能:
 // ・リアルタイムチャット
-// ・Spreadsheet永久保存
+// ・Google Spreadsheet永久保存
 // ・最新30件の履歴復元
 // ・日本時間タイムスタンプ
 // ・日付に応じた時刻表示
 // ・チャットボックスのドラッグ移動
-// ・名前のlocalStorage自動保存
-// ・チャット位置のlocalStorage保存
+// ・名前の自動保存
+// ・チャット位置の保存
+// ・URL自動リンク化
+// ・画像URLの埋め込み表示
 // ============================================================
 
 const express = require("express");
 const { WebSocketServer, WebSocket } = require("ws");
 
 const app = express();
-
 const port = process.env.PORT || 3000;
 
 
@@ -30,15 +31,13 @@ const GAS_DEPLOY_URL =
 
 
 // ============================================================
-// チャット履歴
+// HISTORY
 // ============================================================
 
 const chatHistory = [];
-
 const MAX_HISTORY = 30;
 
 let historyLoaded = false;
-
 let historyLoadingPromise = null;
 
 
@@ -228,6 +227,43 @@ body {
   font-size: 10px;
 }
 
+/* URLリンク */
+
+.chat-link {
+  color: #64b5f6;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
+.chat-link:hover {
+  color: #90caf9;
+}
+
+/* 画像 */
+
+.chat-image-container {
+  margin-top: 7px;
+  margin-bottom: 5px;
+}
+
+.chat-image {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  width: auto;
+  height: auto;
+  border-radius: 5px;
+  object-fit: contain;
+  cursor: pointer;
+  background: rgba(255,255,255,0.05);
+}
+
+.chat-image-text {
+  margin-top: 5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 #input-area {
   display: flex;
   flex: 0 0 auto;
@@ -376,7 +412,7 @@ const sendBtn =
 
 
 // ============================================================
-// localStorage設定
+// localStorage
 // ============================================================
 
 const STORAGE_NAME_KEY =
@@ -387,100 +423,63 @@ const STORAGE_POSITION_KEY =
 
 
 // ============================================================
-// 名前の復元
+// 名前保存
 // ============================================================
 
 function loadSavedName() {
 
   try {
 
-    const savedName =
+    const saved =
       localStorage.getItem(
         STORAGE_NAME_KEY
       );
 
-    if (
-      savedName &&
-      savedName.trim() !== ""
-    ) {
-
-      nameInput.value =
-        savedName.slice(0, 10);
-
-    } else {
-
-      nameInput.value =
-        "ゲスト";
-    }
+    nameInput.value =
+      saved && saved.trim()
+        ? saved.slice(0, 10)
+        : "ゲスト";
 
   } catch (error) {
 
-    console.warn(
-      "名前の復元に失敗:",
-      error
-    );
-
-    nameInput.value =
-      "ゲスト";
+    nameInput.value = "ゲスト";
   }
 }
 
 
-// ============================================================
-// 名前の保存
-// ============================================================
-
 function saveName() {
 
-  let name =
-    nameInput.value.trim();
-
-  if (!name) {
-    name = "ゲスト";
-  }
-
-  name =
-    name.slice(0, 10);
+  const name =
+    nameInput.value.trim() ||
+    "ゲスト";
 
   try {
 
     localStorage.setItem(
       STORAGE_NAME_KEY,
-      name
+      name.slice(0, 10)
     );
 
   } catch (error) {
 
-    console.warn(
-      "名前の保存に失敗:",
-      error
-    );
+    console.warn(error);
   }
 }
 
 
-// ページ読み込み時に復元
 loadSavedName();
 
-
-// 名前を変更したら保存
 nameInput.addEventListener(
   "input",
   saveName
 );
 
-
-// フォーカスが外れたときにも保存
 nameInput.addEventListener(
   "change",
   function () {
 
-    if (
-      nameInput.value.trim() === ""
-    ) {
-
-      nameInput.value =
-        "ゲスト";
+    if (!nameInput.value.trim()) {
+      nameInput.value = "ゲスト";
     }
 
     saveName();
@@ -489,7 +488,7 @@ nameInput.addEventListener(
 
 
 // ============================================================
-// チャット位置の保存
+// チャット位置保存
 // ============================================================
 
 function saveChatPosition() {
@@ -497,32 +496,22 @@ function saveChatPosition() {
   try {
 
     const rect =
-      chatContainer
-        .getBoundingClientRect();
-
-    const position = {
-      x: rect.left,
-      y: rect.top
-    };
+      chatContainer.getBoundingClientRect();
 
     localStorage.setItem(
       STORAGE_POSITION_KEY,
-      JSON.stringify(position)
+      JSON.stringify({
+        x: rect.left,
+        y: rect.top
+      })
     );
 
   } catch (error) {
 
-    console.warn(
-      "チャット位置の保存に失敗:",
-      error
-    );
+    console.warn(error);
   }
 }
 
-
-// ============================================================
-// チャット位置の復元
-// ============================================================
 
 function loadChatPosition() {
 
@@ -533,9 +522,7 @@ function loadChatPosition() {
         STORAGE_POSITION_KEY
       );
 
-    if (!saved) {
-      return;
-    }
+    if (!saved) return;
 
     const position =
       JSON.parse(saved);
@@ -543,9 +530,7 @@ function loadChatPosition() {
     if (
       !Number.isFinite(position.x) ||
       !Number.isFinite(position.y)
-    ) {
-      return;
-    }
+    ) return;
 
     const maxX =
       Math.max(
@@ -587,26 +572,20 @@ function loadChatPosition() {
 
   } catch (error) {
 
-    console.warn(
-      "チャット位置の復元に失敗:",
-      error
-    );
+    console.warn(error);
   }
 }
 
 
-// ページ読み込み時に位置を復元
 loadChatPosition();
 
 
 // ============================================================
-// CHAT DRAG
+// ドラッグ
 // ============================================================
 
 let isDragging = false;
-
 let dragOffsetX = 0;
-
 let dragOffsetY = 0;
 
 
@@ -617,15 +596,12 @@ chatDragBar.addEventListener(
     if (
       event.pointerType === "mouse" &&
       event.button !== 0
-    ) {
-      return;
-    }
+    ) return;
 
     event.preventDefault();
 
     const rect =
-      chatContainer
-        .getBoundingClientRect();
+      chatContainer.getBoundingClientRect();
 
     dragOffsetX =
       event.clientX - rect.left;
@@ -652,14 +628,10 @@ chatDragBar.addEventListener(
     );
 
     try {
-
       chatDragBar.setPointerCapture(
         event.pointerId
       );
-
-    } catch (error) {
-      // 無視
-    }
+    } catch (error) {}
   }
 );
 
@@ -668,46 +640,40 @@ chatDragBar.addEventListener(
   "pointermove",
   function (event) {
 
-    if (!isDragging) {
-      return;
-    }
+    if (!isDragging) return;
 
     event.preventDefault();
-
-    const width =
-      chatContainer.offsetWidth;
-
-    const height =
-      chatContainer.offsetHeight;
-
-    let x =
-      event.clientX - dragOffsetX;
-
-    let y =
-      event.clientY - dragOffsetY;
 
     const maxX =
       Math.max(
         0,
-        window.innerWidth - width
+        window.innerWidth -
+        chatContainer.offsetWidth
       );
 
     const maxY =
       Math.max(
         0,
-        window.innerHeight - height
+        window.innerHeight -
+        chatContainer.offsetHeight
       );
 
-    x =
+    const x =
       Math.max(
         0,
-        Math.min(x, maxX)
+        Math.min(
+          event.clientX - dragOffsetX,
+          maxX
+        )
       );
 
-    y =
+    const y =
       Math.max(
         0,
-        Math.min(y, maxY)
+        Math.min(
+          event.clientY - dragOffsetY,
+          maxY
+        )
       );
 
     chatContainer.style.left =
@@ -719,15 +685,9 @@ chatDragBar.addEventListener(
 );
 
 
-// ============================================================
-// ドラッグ終了
-// ============================================================
-
 function finishDragging(event) {
 
-  if (!isDragging) {
-    return;
-  }
+  if (!isDragging) return;
 
   isDragging = false;
 
@@ -736,16 +696,11 @@ function finishDragging(event) {
   );
 
   try {
-
     chatDragBar.releasePointerCapture(
       event.pointerId
     );
+  } catch (error) {}
 
-  } catch (error) {
-    // 無視
-  }
-
-  // ★ 移動位置を保存
   saveChatPosition();
 }
 
@@ -755,7 +710,6 @@ chatDragBar.addEventListener(
   finishDragging
 );
 
-
 chatDragBar.addEventListener(
   "pointercancel",
   finishDragging
@@ -763,54 +717,41 @@ chatDragBar.addEventListener(
 
 
 // ============================================================
-// ウィンドウリサイズ
+// リサイズ
 // ============================================================
 
 window.addEventListener(
   "resize",
   function () {
 
-    if (
-      chatContainer.style.left === ""
-    ) {
-      return;
-    }
+    if (!chatContainer.style.left) return;
 
     const rect =
-      chatContainer
-        .getBoundingClientRect();
+      chatContainer.getBoundingClientRect();
 
     const maxX =
       Math.max(
         0,
-        window.innerWidth -
-        rect.width
+        window.innerWidth - rect.width
       );
 
     const maxY =
       Math.max(
         0,
-        window.innerHeight -
-        rect.height
-      );
-
-    const x =
-      Math.max(
-        0,
-        Math.min(rect.left, maxX)
-      );
-
-    const y =
-      Math.max(
-        0,
-        Math.min(rect.top, maxY)
+        window.innerHeight - rect.height
       );
 
     chatContainer.style.left =
-      x + "px";
+      Math.max(
+        0,
+        Math.min(rect.left, maxX)
+      ) + "px";
 
     chatContainer.style.top =
-      y + "px";
+      Math.max(
+        0,
+        Math.min(rect.top, maxY)
+      ) + "px";
 
     saveChatPosition();
   }
@@ -823,43 +764,27 @@ window.addEventListener(
 
 function changeUrl() {
 
-  let url =
-    urlInput.value.trim();
+  let url = urlInput.value.trim();
 
-  if (!url) {
-    return;
-  }
+  if (!url) return;
 
   if (
-    url.indexOf("http://") !== 0 &&
-    url.indexOf("https://") !== 0
+    !url.startsWith("http://") &&
+    !url.startsWith("https://")
   ) {
-
-    url =
-      "https://" + url;
-
-    urlInput.value =
-      url;
+    url = "https://" + url;
+    urlInput.value = url;
   }
 
-  gameArea.src =
-    url;
+  gameArea.src = url;
 
-  topBar.style.opacity =
-    "0";
-
+  topBar.style.opacity = "0";
   topBar.style.transform =
     "translateY(-20px)";
 
-  setTimeout(
-    function () {
-
-      topBar.style.display =
-        "none";
-
-    },
-    500
-  );
+  setTimeout(function () {
+    topBar.style.display = "none";
+  }, 500);
 }
 
 
@@ -868,14 +793,10 @@ urlBtn.addEventListener(
   changeUrl
 );
 
-
 urlInput.addEventListener(
   "keydown",
   function (event) {
-
-    if (event.key === "Enter") {
-      changeUrl();
-    }
+    if (event.key === "Enter") changeUrl();
   }
 );
 
@@ -889,12 +810,9 @@ const protocol =
     ? "wss:"
     : "ws:";
 
-const ws =
-  new WebSocket(
-    protocol +
-    "//" +
-    window.location.host
-  );
+const ws = new WebSocket(
+  protocol + "//" + window.location.host
+);
 
 
 // ============================================================
@@ -920,7 +838,6 @@ function getJapanDateParts(date) {
   const result = {};
 
   for (const part of parts) {
-
     if (part.type !== "literal") {
       result[part.type] = part.value;
     }
@@ -930,69 +847,155 @@ function getJapanDateParts(date) {
 }
 
 
-// ============================================================
-// タイムスタンプ表示
-// ============================================================
-
 function formatTimestamp(value) {
 
-  if (!value) {
-    return "";
-  }
+  if (!value) return "";
 
-  const date =
-    new Date(value);
+  const date = new Date(value);
 
-  if (isNaN(date.getTime())) {
-    return "";
-  }
+  if (isNaN(date.getTime())) return "";
 
-  const target =
-    getJapanDateParts(date);
+  const target = getJapanDateParts(date);
+  const now = getJapanDateParts(new Date());
 
-  const now =
-    getJapanDateParts(new Date());
-
-  // 今日
   if (
     target.year === now.year &&
     target.month === now.month &&
     target.day === now.day
   ) {
-
-    return (
-      target.hour +
-      ":" +
-      target.minute
-    );
+    return target.hour + ":" + target.minute;
   }
 
-  // 今年
   if (target.year === now.year) {
-
     return (
-      target.month +
-      "/" +
-      target.day +
-      " " +
-      target.hour +
-      ":" +
+      target.month + "/" +
+      target.day + " " +
+      target.hour + ":" +
       target.minute
     );
   }
 
-  // 前年以前
   return (
-    target.year +
-    "/" +
-    target.month +
-    "/" +
-    target.day +
-    " " +
-    target.hour +
-    ":" +
+    target.year + "/" +
+    target.month + "/" +
+    target.day + " " +
+    target.hour + ":" +
     target.minute
   );
+}
+
+
+// ============================================================
+// URL判定
+// ============================================================
+
+function isImageUrl(url) {
+
+  try {
+
+    const parsed = new URL(url);
+
+    if (
+      parsed.protocol !== "http:" &&
+      parsed.protocol !== "https:"
+    ) {
+      return false;
+    }
+
+    return /\\.(png|jpg|jpeg|gif|webp|avif|bmp)(?:$|[?#])/i.test(url);
+
+  } catch (error) {
+    return false;
+  }
+}
+
+
+// ============================================================
+// テキストをリンク・画像に変換
+// ============================================================
+
+function appendRichText(container, text) {
+
+  const urlRegex = /https?:\\/\\/[^\\s<> "'\`]+/gi;
+
+  let lastIndex = 0;
+  let match;
+
+  while ((match = urlRegex.exec(text)) !== null) {
+
+    // URLより前の文章
+    if (match.index > lastIndex) {
+
+      container.appendChild(
+        document.createTextNode(
+          text.slice(lastIndex, match.index)
+        )
+      );
+    }
+
+    const url = match[0];
+
+    if (isImageUrl(url)) {
+
+      const imageContainer =
+        document.createElement("div");
+
+      imageContainer.className =
+        "chat-image-container";
+
+      const link =
+        document.createElement("a");
+
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+
+      const image =
+        document.createElement("img");
+
+      image.src = url;
+      image.className = "chat-image";
+      image.loading = "lazy";
+      image.alt = "チャット画像";
+
+      image.onerror = function () {
+        image.replaceWith(
+          document.createTextNode(
+            "画像を表示できません"
+          )
+        );
+      };
+
+      link.appendChild(image);
+      imageContainer.appendChild(link);
+      container.appendChild(imageContainer);
+
+    } else {
+
+      const link =
+        document.createElement("a");
+
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.className = "chat-link";
+      link.textContent = url;
+
+      container.appendChild(link);
+    }
+
+    lastIndex = urlRegex.lastIndex;
+  }
+
+  // 残りの文章
+  if (lastIndex < text.length) {
+
+    container.appendChild(
+      document.createTextNode(
+        text.slice(lastIndex)
+      )
+    );
+  }
 }
 
 
@@ -1000,141 +1003,104 @@ function formatTimestamp(value) {
 // メッセージ受信
 // ============================================================
 
-ws.onmessage =
-  function (event) {
+ws.onmessage = function (event) {
 
-    try {
+  try {
 
-      const data =
-        JSON.parse(event.data);
+    const data = JSON.parse(event.data);
 
-      const li =
-        document.createElement("li");
+    const li =
+      document.createElement("li");
 
-      const sender =
+    const sender =
+      document.createElement("span");
+
+    sender.className = "sender";
+    sender.textContent =
+      "[" + (data.senderId || "ゲスト") + "]";
+
+    li.appendChild(sender);
+
+    if (data.timestamp) {
+
+      const timestamp =
         document.createElement("span");
 
-      sender.className =
-        "sender";
+      timestamp.className = "timestamp";
+      timestamp.textContent =
+        formatTimestamp(data.timestamp);
 
-      sender.textContent =
-        "[" +
-        (data.senderId || "ゲスト") +
-        "]";
+      li.appendChild(timestamp);
+    }
 
-      li.appendChild(sender);
+    const content =
+      document.createElement("div");
 
-      if (data.timestamp) {
+    content.className = "chat-content";
 
-        const timestamp =
-          document.createElement("span");
+    appendRichText(
+      content,
+      String(data.text || "")
+    );
 
-        timestamp.className =
-          "timestamp";
+    li.appendChild(content);
 
-        timestamp.textContent =
-          formatTimestamp(
-            data.timestamp
-          );
+    messages.appendChild(li);
 
-        li.appendChild(timestamp);
-      }
-
-      const text =
-        document.createTextNode(
-          data.text || ""
-        );
-
-      li.appendChild(text);
-
-      messages.appendChild(li);
-
-      while (
-        messages.children.length > 30
-      ) {
-
-        messages.removeChild(
-          messages.firstChild
-        );
-      }
-
-      messages.scrollTop =
-        messages.scrollHeight;
-
-    } catch (error) {
-
-      console.error(
-        "受信エラー:",
-        error
+    while (messages.children.length > 30) {
+      messages.removeChild(
+        messages.firstChild
       );
     }
-  };
+
+    messages.scrollTop =
+      messages.scrollHeight;
+
+  } catch (error) {
+
+    console.error(
+      "受信エラー:",
+      error
+    );
+  }
+};
 
 
 // ============================================================
 // WebSocket状態
 // ============================================================
 
-ws.onopen =
-  function () {
+ws.onopen = function () {
+  console.log("WebSocket connected");
+};
 
-    console.log(
-      "WebSocket connected"
-    );
-  };
+ws.onerror = function (error) {
+  console.error("WebSocket error:", error);
+};
 
-
-ws.onerror =
-  function (error) {
-
-    console.error(
-      "WebSocket error:",
-      error
-    );
-  };
-
-
-ws.onclose =
-  function () {
-
-    console.log(
-      "WebSocket closed"
-    );
-  };
+ws.onclose = function () {
+  console.log("WebSocket closed");
+};
 
 
 // ============================================================
-// メッセージ送信
+// 送信
 // ============================================================
 
 function sendMessage() {
 
-  const text =
-    chatInput.value.trim();
+  const text = chatInput.value.trim();
 
-  let name =
-    nameInput.value.trim();
+  let name = nameInput.value.trim();
 
-  if (!name) {
-    name = "ゲスト";
-  }
+  if (!name) name = "ゲスト";
+  if (!text) return;
 
-  if (!text) {
+  if (ws.readyState !== WebSocket.OPEN) {
+    console.error("WebSocket未接続");
     return;
   }
 
-  if (
-    ws.readyState !== WebSocket.OPEN
-  ) {
-
-    console.error(
-      "WebSocket未接続"
-    );
-
-    return;
-  }
-
-  // 送信直前にも名前を保存
   saveName();
 
   ws.send(
@@ -1153,16 +1119,13 @@ sendBtn.addEventListener(
   sendMessage
 );
 
-
 chatInput.addEventListener(
   "keydown",
   function (event) {
-
     if (
       event.key === "Enter" &&
       !event.isComposing
     ) {
-
       sendMessage();
     }
   }
@@ -1170,7 +1133,7 @@ chatInput.addEventListener(
 
 
 // ============================================================
-// "/" キーで入力
+// "/" shortcut
 // ============================================================
 
 window.addEventListener(
@@ -1181,12 +1144,9 @@ window.addEventListener(
       document.activeElement === chatInput ||
       document.activeElement === urlInput ||
       document.activeElement === nameInput
-    ) {
-      return;
-    }
+    ) return;
 
     if (event.key === "/") {
-
       event.preventDefault();
       chatInput.focus();
     }
@@ -1202,43 +1162,27 @@ window.addEventListener(
 
 
 // ============================================================
-// HTTPサーバー
+// HTTP SERVER
 // ============================================================
 
-const server =
-  app.listen(
-    port,
-    function () {
+const server = app.listen(port, function () {
 
-      console.log(
-        "========================================"
-      );
+  console.log("========================================");
+  console.log("ChatServer 起動");
+  console.log("PORT: " + port);
+  console.log("========================================");
 
-      console.log(
-        "ChatServer 起動"
-      );
-
-      console.log(
-        "PORT: " + port
-      );
-
-      console.log(
-        "========================================"
-      );
-
-      loadHistoryFromGAS();
-    }
-  );
+  loadHistoryFromGAS();
+});
 
 
 // ============================================================
-// WebSocketサーバー
+// WEBSOCKET SERVER
 // ============================================================
 
-const wss =
-  new WebSocketServer({
-    server: server
-  });
+const wss = new WebSocketServer({
+  server: server
+});
 
 
 // ============================================================
@@ -1248,166 +1192,115 @@ const wss =
 async function loadHistoryFromGAS() {
 
   if (historyLoaded) {
-
-    console.log(
-      "[GAS GET] 履歴はロード済みです"
-    );
-
+    console.log("[GAS GET] 履歴はロード済みです");
     return;
   }
 
   if (historyLoadingPromise) {
-
-    console.log(
-      "[GAS GET] 現在ロード中です"
-    );
-
+    console.log("[GAS GET] 現在ロード中です");
     return historyLoadingPromise;
   }
 
-  historyLoadingPromise =
-    (async function () {
+  historyLoadingPromise = (async function () {
+
+    try {
+
+      console.log("========================================");
+      console.log("[GAS GET] 接続開始");
+      console.log("[GAS GET] URL: " + GAS_DEPLOY_URL);
+
+      const response = await fetch(
+        GAS_DEPLOY_URL + "?action=read",
+        {
+          method: "GET",
+          redirect: "follow",
+          cache: "no-store"
+        }
+      );
+
+      console.log(
+        "[GAS GET] HTTP STATUS: " +
+        response.status
+      );
+
+      console.log(
+        "[GAS GET] FINAL URL: " +
+        response.url
+      );
+
+      const body = await response.text();
+
+      if (!response.ok) {
+        throw new Error(
+          "HTTP " + response.status + " / " + body
+        );
+      }
+
+      let data;
 
       try {
-
-        console.log(
-          "========================================"
-        );
-
-        console.log(
-          "[GAS GET] 接続開始"
-        );
-
-        console.log(
-          "[GAS GET] URL: " +
-          GAS_DEPLOY_URL
-        );
-
-        const response =
-          await fetch(
-            GAS_DEPLOY_URL +
-            "?action=read",
-            {
-              method: "GET",
-              redirect: "follow",
-              cache: "no-store"
-            }
-          );
-
-        console.log(
-          "[GAS GET] HTTP STATUS: " +
-          response.status
-        );
-
-        console.log(
-          "[GAS GET] FINAL URL: " +
-          response.url
-        );
-
-        const body =
-          await response.text();
-
-        if (!response.ok) {
-
-          throw new Error(
-            "HTTP " +
-            response.status +
-            " / " +
-            body
-          );
-        }
-
-        let data;
-
-        try {
-
-          data =
-            JSON.parse(body);
-
-        } catch (error) {
-
-          throw new Error(
-            "GAS response is not JSON: " +
-            body
-          );
-        }
-
-        if (!Array.isArray(data)) {
-
-          throw new Error(
-            "GAS response is not an array"
-          );
-        }
-
-        chatHistory.length = 0;
-
-        data.forEach(
-          function (message) {
-
-            if (!message) {
-              return;
-            }
-
-            chatHistory.push({
-
-              text:
-                message.text == null
-                  ? ""
-                  : String(message.text),
-
-              senderId:
-                message.sender_id == null ||
-                message.sender_id === ""
-                  ? "ゲスト"
-                  : String(message.sender_id),
-
-              timestamp:
-                message.timestamp || null
-            });
-          }
-        );
-
-        while (
-          chatHistory.length > MAX_HISTORY
-        ) {
-
-          chatHistory.shift();
-        }
-
-        historyLoaded = true;
-
-        console.log(
-          "[GAS GET] 成功"
-        );
-
-        console.log(
-          "[GAS GET] 履歴件数: " +
-          chatHistory.length
-        );
-
-        console.log(
-          "========================================"
-        );
-
+        data = JSON.parse(body);
       } catch (error) {
-
-        historyLoaded = false;
-
-        console.error(
-          "!!!!!!!! GAS GET ERROR !!!!!!!!"
+        throw new Error(
+          "GAS response is not JSON: " + body
         );
-
-        console.error(error);
-
-        console.error(
-          "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-        );
-
-      } finally {
-
-        historyLoadingPromise = null;
       }
-    })();
+
+      if (!Array.isArray(data)) {
+        throw new Error(
+          "GAS response is not an array"
+        );
+      }
+
+      chatHistory.length = 0;
+
+      data.forEach(function (message) {
+
+        if (!message) return;
+
+        chatHistory.push({
+          text:
+            message.text == null
+              ? ""
+              : String(message.text),
+
+          senderId:
+            message.sender_id == null ||
+            message.sender_id === ""
+              ? "ゲスト"
+              : String(message.sender_id),
+
+          timestamp:
+            message.timestamp || null
+        });
+      });
+
+      while (chatHistory.length > MAX_HISTORY) {
+        chatHistory.shift();
+      }
+
+      historyLoaded = true;
+
+      console.log("[GAS GET] 成功");
+      console.log(
+        "[GAS GET] 履歴件数: " +
+        chatHistory.length
+      );
+      console.log("========================================");
+
+    } catch (error) {
+
+      historyLoaded = false;
+
+      console.error("!!!!!!!! GAS GET ERROR !!!!!!!!");
+      console.error(error);
+      console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+
+    } finally {
+
+      historyLoadingPromise = null;
+    }
+  })();
 
   return historyLoadingPromise;
 }
@@ -1428,28 +1321,23 @@ async function saveMessageToGAS(message) {
       timestamp: message.timestamp
     };
 
-    console.log(
-      "[GAS POST] 保存開始"
-    );
-
+    console.log("[GAS POST] 保存開始");
     console.log(
       "[GAS POST] DATA: " +
       JSON.stringify(payload)
     );
 
-    const response =
-      await fetch(
-        GAS_DEPLOY_URL,
-        {
-          method: "POST",
-          redirect: "follow",
-          headers: {
-            "Content-Type":
-              "application/json"
-          },
-          body: JSON.stringify(payload)
-        }
-      );
+    const response = await fetch(
+      GAS_DEPLOY_URL,
+      {
+        method: "POST",
+        redirect: "follow",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      }
+    );
 
     console.log(
       "[GAS POST] HTTP STATUS: " +
@@ -1461,8 +1349,7 @@ async function saveMessageToGAS(message) {
       response.url
     );
 
-    const responseBody =
-      await response.text();
+    const responseBody = await response.text();
 
     console.log(
       "[GAS POST] RESPONSE: " +
@@ -1470,35 +1357,24 @@ async function saveMessageToGAS(message) {
     );
 
     if (!response.ok) {
-
       throw new Error(
-        "HTTP " +
-        response.status +
-        ": " +
-        responseBody
+        "HTTP " + response.status +
+        ": " + responseBody
       );
     }
 
     let result;
 
     try {
-
-      result =
-        JSON.parse(responseBody);
-
+      result = JSON.parse(responseBody);
     } catch (error) {
-
       throw new Error(
         "GAS POST response is not JSON: " +
         responseBody
       );
     }
 
-    if (
-      !result ||
-      result.ok !== true
-    ) {
-
+    if (!result || result.ok !== true) {
       throw new Error(
         result && result.error
           ? result.error
@@ -1514,15 +1390,9 @@ async function saveMessageToGAS(message) {
 
   } catch (error) {
 
-    console.error(
-      "!!!!!!!! GAS POST ERROR !!!!!!!!"
-    );
-
+    console.error("!!!!!!!! GAS POST ERROR !!!!!!!!");
     console.error(error);
-
-    console.error(
-      "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    );
+    console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 
     return false;
   }
@@ -1533,148 +1403,94 @@ async function saveMessageToGAS(message) {
 // WEBSOCKET CONNECTION
 // ============================================================
 
-wss.on(
-  "connection",
-  async function (ws) {
+wss.on("connection", async function (ws) {
 
-    console.log(
-      "[WS] Client connected"
-    );
+  console.log("[WS] Client connected");
 
-    if (!historyLoaded) {
-      await loadHistoryFromGAS();
+  if (!historyLoaded) {
+    await loadHistoryFromGAS();
+  }
+
+  console.log(
+    "[WS] 履歴を送信: " +
+    chatHistory.length + "件"
+  );
+
+  for (const message of chatHistory) {
+
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(message));
     }
+  }
 
-    console.log(
-      "[WS] 履歴を送信: " +
-      chatHistory.length +
-      "件"
-    );
+  ws.on("message", async function (rawMessage) {
 
-    for (const message of chatHistory) {
+    try {
+
+      const clientData =
+        JSON.parse(rawMessage.toString());
+
+      let text = "";
+
+      if (typeof clientData.text === "string") {
+        text = clientData.text.trim();
+      }
+
+      if (!text) return;
+
+      let senderId = "ゲスト";
 
       if (
-        ws.readyState === WebSocket.OPEN
+        typeof clientData.name === "string" &&
+        clientData.name.trim()
       ) {
-
-        ws.send(
-          JSON.stringify(message)
-        );
+        senderId =
+          clientData.name.trim().slice(0, 10);
       }
-    }
 
-    ws.on(
-      "message",
-      async function (rawMessage) {
+      const timestamp =
+        new Date().toISOString();
 
-        try {
+      const message = {
+        text: text,
+        senderId: senderId,
+        timestamp: timestamp
+      };
 
-          const clientData =
-            JSON.parse(
-              rawMessage.toString()
-            );
+      console.log(
+        "[CHAT] NEW: " +
+        JSON.stringify(message)
+      );
 
-          let text = "";
+      chatHistory.push(message);
 
-          if (
-            typeof clientData.text ===
-            "string"
-          ) {
+      while (chatHistory.length > MAX_HISTORY) {
+        chatHistory.shift();
+      }
 
-            text =
-              clientData.text.trim();
-          }
+      wss.clients.forEach(function (client) {
 
-          if (!text) {
-            return;
-          }
-
-          let senderId = "ゲスト";
-
-          if (
-            typeof clientData.name ===
-              "string" &&
-            clientData.name.trim()
-          ) {
-
-            senderId =
-              clientData.name
-                .trim()
-                .slice(0, 10);
-          }
-
-          // timestampはRenderで一度だけ生成
-          const timestamp =
-            new Date().toISOString();
-
-          const message = {
-            text: text,
-            senderId: senderId,
-            timestamp: timestamp
-          };
-
-          console.log(
-            "[CHAT] NEW: " +
-            JSON.stringify(message)
-          );
-
-          chatHistory.push(message);
-
-          while (
-            chatHistory.length > MAX_HISTORY
-          ) {
-
-            chatHistory.shift();
-          }
-
-          // 全員へ即時配信
-          wss.clients.forEach(
-            function (client) {
-
-              if (
-                client.readyState ===
-                WebSocket.OPEN
-              ) {
-
-                client.send(
-                  JSON.stringify(message)
-                );
-              }
-            }
-          );
-
-          // GASへ保存
-          await saveMessageToGAS(message);
-
-        } catch (error) {
-
-          console.error(
-            "[WS] Message error:",
-            error
-          );
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify(message));
         }
-      }
-    );
+      });
 
-    ws.on(
-      "close",
-      function () {
+      await saveMessageToGAS(message);
 
-        console.log(
-          "[WS] Client disconnected"
-        );
-      }
-    );
+    } catch (error) {
 
-    ws.on(
-      "error",
-      function (error) {
+      console.error(
+        "[WS] Message error:",
+        error
+      );
+    }
+  });
 
-        console.error(
-          "[WS] Error:",
-          error
-        );
-      }
-    );
-  }
-);
+  ws.on("close", function () {
+    console.log("[WS] Client disconnected");
+  });
+
+  ws.on("error", function (error) {
+    console.error("[WS] Error:", error);
+  });
+});
