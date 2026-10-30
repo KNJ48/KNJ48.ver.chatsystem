@@ -1,7 +1,7 @@
 // ============================================================
 // chatserver.js
 // Render + WebSocket + GAS + Spreadsheet
-// URLリンク化・画像埋め込み・未読通知対応版
+// URL自動リンク化・画像埋め込み・未読通知対応版
 // ============================================================
 
 const express = require("express");
@@ -586,7 +586,6 @@ let unreadCount = 0;
 let activeNotification = null;
 
 
-// 通知が利用できるか確認
 function canUseNotification() {
   return (
     "Notification" in window &&
@@ -595,8 +594,6 @@ function canUseNotification() {
 }
 
 
-// 最初のクリックで通知許可を求める
-// UIのボタン追加は不要
 function requestNotificationPermission() {
 
   if (!canUseNotification()) return;
@@ -617,7 +614,6 @@ function requestNotificationPermission() {
 }
 
 
-// チャット画面内で最初にクリックしたときだけ実行
 document.addEventListener(
   "click",
   requestNotificationPermission,
@@ -625,27 +621,20 @@ document.addEventListener(
 );
 
 
-// タイトル更新
 function updateUnreadTitle() {
 
   if (unreadCount > 0) {
-
     document.title =
       "(" + unreadCount + ") " + BASE_TITLE;
-
   } else {
-
     document.title = BASE_TITLE;
-
   }
 }
 
 
-// 古い通知を閉じる
 function closeUnreadNotification() {
 
   if (activeNotification) {
-
     try {
       activeNotification.close();
     } catch (error) {}
@@ -655,7 +644,6 @@ function closeUnreadNotification() {
 }
 
 
-// 未読リセット
 function resetUnreadCount() {
 
   unreadCount = 0;
@@ -666,7 +654,6 @@ function resetUnreadCount() {
 }
 
 
-// 通知表示
 function showUnreadNotification() {
 
   if (!canUseNotification()) return;
@@ -718,16 +705,12 @@ function showUnreadNotification() {
 }
 
 
-// 新着メッセージの通知処理
 function handleUnreadMessage(data) {
 
-  // 過去の履歴は通知しない
   if (data.type !== "message") return;
 
-  // 自分の投稿は通知しない
   if (data.isSelf === true) return;
 
-  // チャットタブが表示中なら通知しない
   if (!document.hidden) return;
 
   unreadCount++;
@@ -738,7 +721,6 @@ function handleUnreadMessage(data) {
 }
 
 
-// チャットタブに戻ったら未読リセット
 document.addEventListener(
   "visibilitychange",
   function () {
@@ -880,7 +862,7 @@ function isImageUrl(url) {
       return true;
     }
 
-    // Googleusercontentの画像
+    // Googleusercontent
     if (
       host.endsWith(".googleusercontent.com") &&
       (
@@ -905,10 +887,8 @@ function isImageUrl(url) {
       }
     }
 
-    // Imgur直接画像
-    if (
-      host === "i.imgur.com"
-    ) {
+    // Imgur
+    if (host === "i.imgur.com") {
       return true;
     }
 
@@ -921,29 +901,97 @@ function isImageUrl(url) {
 
 
 // ============================================================
-// リンク・画像表示
+// URL自動リンク化
+// http:// や https:// がなくても認識
 // ============================================================
 
 function appendRichText(container, text) {
 
-  const urlRegex = /https?:\\/\\/[^\\s<>"']+/gi;
+  // 通常URLと、プロトコルなしのドメインを検出
+  //
+  // 対応例:
+  // https://example.com
+  // http://example.com
+  // example.com
+  // www.example.com
+  // example.co.jp/path
+  // example.com/image.png
+
+  const urlRegex =
+    /(?:https?:\\/\\/)?(?:[a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,}(?::[0-9]{1,5})?(?:\\/[^\\s<>"']*)?(?:\\?[^\\s<>"']*)?(?:#[^\\s<>"']*)?/gi;
 
   let lastIndex = 0;
   let match;
 
   while ((match = urlRegex.exec(text)) !== null) {
 
-    if (match.index > lastIndex) {
+    const startIndex = match.index;
+
+    // メールアドレスなどの途中をURLとして認識しない
+    if (
+      startIndex > 0 &&
+      /[a-zA-Z0-9_@.\\/-]/.test(text.charAt(startIndex - 1))
+    ) {
+      continue;
+    }
+
+    let rawUrl = match[0];
+
+    // 文末の句読点などを除外
+    let trailing = "";
+
+    while (
+      rawUrl.length > 0 &&
+      /[.,!?;:。、，．！？）)]/.test(
+        rawUrl.charAt(rawUrl.length - 1)
+      )
+    ) {
+      trailing =
+        rawUrl.charAt(rawUrl.length - 1) +
+        trailing;
+
+      rawUrl = rawUrl.slice(0, -1);
+    }
+
+    if (!rawUrl) {
+      continue;
+    }
+
+    let fullUrl = rawUrl;
+
+    // http(s)がなければhttpsを補完
+    if (!/^https?:\\/\\//i.test(fullUrl)) {
+      fullUrl = "https://" + fullUrl;
+    }
+
+    // URLとして有効か確認
+    try {
+
+      const parsed = new URL(fullUrl);
+
+      if (
+        parsed.protocol !== "http:" &&
+        parsed.protocol !== "https:"
+      ) {
+        continue;
+      }
+
+    } catch (error) {
+      continue;
+    }
+
+    // URLより前の文章
+    if (startIndex > lastIndex) {
+
       container.appendChild(
         document.createTextNode(
-          text.slice(lastIndex, match.index)
+          text.slice(lastIndex, startIndex)
         )
       );
     }
 
-    const url = match[0];
-
-    if (isImageUrl(url)) {
+    // 画像URLの場合
+    if (isImageUrl(fullUrl)) {
 
       const imageContainer =
         document.createElement("div");
@@ -954,14 +1002,14 @@ function appendRichText(container, text) {
       const link =
         document.createElement("a");
 
-      link.href = url;
+      link.href = fullUrl;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
 
       const image =
         document.createElement("img");
 
-      image.src = url;
+      image.src = fullUrl;
       image.className = "chat-image";
       image.loading = "lazy";
       image.alt = "チャット画像";
@@ -971,7 +1019,7 @@ function appendRichText(container, text) {
         const fallback =
           document.createElement("a");
 
-        fallback.href = url;
+        fallback.href = fullUrl;
         fallback.target = "_blank";
         fallback.rel = "noopener noreferrer";
         fallback.className = "chat-link";
@@ -981,27 +1029,42 @@ function appendRichText(container, text) {
       };
 
       link.appendChild(image);
+
       imageContainer.appendChild(link);
+
       container.appendChild(imageContainer);
 
     } else {
 
+      // 通常リンク
       const link =
         document.createElement("a");
 
-      link.href = url;
+      link.href = fullUrl;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       link.className = "chat-link";
-      link.textContent = url;
+
+      // 表示は投稿された文字列のまま
+      link.textContent = rawUrl;
 
       container.appendChild(link);
+    }
+
+    // URL末尾に付いていた句読点を復元
+    if (trailing) {
+
+      container.appendChild(
+        document.createTextNode(trailing)
+      );
     }
 
     lastIndex = urlRegex.lastIndex;
   }
 
+  // 最後のURLより後ろにある文章
   if (lastIndex < text.length) {
+
     container.appendChild(
       document.createTextNode(
         text.slice(lastIndex)
@@ -1021,7 +1084,6 @@ ws.onmessage = function (event) {
 
     const data = JSON.parse(event.data);
 
-    // 履歴終了などの制御メッセージは表示しない
     if (
       !data ||
       typeof data.text !== "string"
@@ -1032,7 +1094,9 @@ ws.onmessage = function (event) {
     const li = document.createElement("li");
 
     const sender = document.createElement("span");
+
     sender.className = "sender";
+
     sender.textContent =
       "[" + (data.senderId || "ゲスト") + "]";
 
@@ -1044,6 +1108,7 @@ ws.onmessage = function (event) {
         document.createElement("span");
 
       timestamp.className = "timestamp";
+
       timestamp.textContent =
         formatTimestamp(data.timestamp);
 
@@ -1061,9 +1126,11 @@ ws.onmessage = function (event) {
     );
 
     li.appendChild(content);
+
     messages.appendChild(li);
 
     while (messages.children.length > 30) {
+
       messages.removeChild(
         messages.firstChild
       );
@@ -1072,7 +1139,6 @@ ws.onmessage = function (event) {
     messages.scrollTop =
       messages.scrollHeight;
 
-    // 新着メッセージだけ通知判定
     handleUnreadMessage(data);
 
   } catch (error) {
@@ -1106,13 +1172,17 @@ ws.onclose = function () {
 function sendMessage() {
 
   const text = chatInput.value.trim();
+
   let name = nameInput.value.trim();
 
   if (!name) name = "ゲスト";
+
   if (!text) return;
 
   if (ws.readyState !== WebSocket.OPEN) {
+
     console.error("WebSocket未接続");
+
     return;
   }
 
@@ -1132,6 +1202,7 @@ function sendMessage() {
 sendBtn.addEventListener("click", sendMessage);
 
 chatInput.addEventListener("keydown", function (event) {
+
   if (
     event.key === "Enter" &&
     !event.isComposing
@@ -1154,7 +1225,9 @@ window.addEventListener("keydown", function (event) {
   ) return;
 
   if (event.key === "/") {
+
     event.preventDefault();
+
     chatInput.focus();
   }
 });
@@ -1198,12 +1271,16 @@ const wss = new WebSocketServer({
 async function loadHistoryFromGAS() {
 
   if (historyLoaded) {
+
     console.log("[GAS GET] 履歴はロード済みです");
+
     return;
   }
 
   if (historyLoadingPromise) {
+
     console.log("[GAS GET] 現在ロード中です");
+
     return historyLoadingPromise;
   }
 
@@ -1237,6 +1314,7 @@ async function loadHistoryFromGAS() {
       const body = await response.text();
 
       if (!response.ok) {
+
         throw new Error(
           "HTTP " + response.status + " / " + body
         );
@@ -1245,20 +1323,24 @@ async function loadHistoryFromGAS() {
       let data;
 
       try {
+
         data = JSON.parse(body);
+
       } catch (error) {
+
         throw new Error(
           "GAS response is not JSON: " + body
         );
       }
 
       if (!Array.isArray(data)) {
+
         throw new Error(
           "GAS response is not an array"
         );
       }
 
-      // GAS読み込み中に受信した新着を保持
+      // GAS読み込み中の新着を保持
       const currentMessages = chatHistory.slice();
 
       chatHistory.length = 0;
@@ -1268,6 +1350,7 @@ async function loadHistoryFromGAS() {
         if (!message) return;
 
         chatHistory.push({
+
           text:
             message.text == null
               ? ""
@@ -1281,6 +1364,7 @@ async function loadHistoryFromGAS() {
 
           timestamp:
             message.timestamp || null
+
         });
       });
 
@@ -1288,6 +1372,7 @@ async function loadHistoryFromGAS() {
       for (const message of currentMessages) {
 
         const exists = chatHistory.some(function (item) {
+
           return (
             item.timestamp === message.timestamp &&
             item.text === message.text &&
@@ -1307,10 +1392,12 @@ async function loadHistoryFromGAS() {
       historyLoaded = true;
 
       console.log("[GAS GET] 成功");
+
       console.log(
         "[GAS GET] 履歴件数: " +
         chatHistory.length
       );
+
       console.log("========================================");
 
     } catch (error) {
@@ -1340,13 +1427,19 @@ async function saveMessageToGAS(message) {
   try {
 
     const payload = {
+
       action: "write",
+
       text: message.text,
+
       sender_id: message.senderId,
+
       timestamp: message.timestamp
+
     };
 
     console.log("[GAS POST] 保存開始");
+
     console.log(
       "[GAS POST] DATA: " +
       JSON.stringify(payload)
@@ -1382,6 +1475,7 @@ async function saveMessageToGAS(message) {
     );
 
     if (!response.ok) {
+
       throw new Error(
         "HTTP " + response.status +
         ": " + responseBody
@@ -1391,8 +1485,11 @@ async function saveMessageToGAS(message) {
     let result;
 
     try {
+
       result = JSON.parse(responseBody);
+
     } catch (error) {
+
       throw new Error(
         "GAS POST response is not JSON: " +
         responseBody
@@ -1400,6 +1497,7 @@ async function saveMessageToGAS(message) {
     }
 
     if (!result || result.ok !== true) {
+
       throw new Error(
         result && result.error
           ? result.error
@@ -1416,7 +1514,9 @@ async function saveMessageToGAS(message) {
   } catch (error) {
 
     console.error("!!!!!!!! GAS POST ERROR !!!!!!!!");
+
     console.error(error);
+
     console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 
     return false;
@@ -1432,13 +1532,15 @@ wss.on("connection", async function (ws) {
 
   console.log("[WS] Client connected");
 
-  // 初期履歴と新着を区別するための状態
   let initialHistorySent = false;
 
-  // 履歴送信前に届いた新着を一時保存
   const pendingMessages = [];
 
-  // この接続にメッセージを送信
+
+  // ==========================================================
+  // この接続への送信
+  // ==========================================================
+
   function sendToThisClient(data) {
 
     if (ws.readyState !== WebSocket.OPEN) {
@@ -1452,11 +1554,10 @@ wss.on("connection", async function (ws) {
     } else {
 
       ws.send(JSON.stringify(data));
-
     }
   }
 
-  // 他の接続からも使えるように登録
+
   ws.chatSend = sendToThisClient;
 
 
@@ -1477,6 +1578,7 @@ wss.on("connection", async function (ws) {
         clientData &&
         typeof clientData.text === "string"
       ) {
+
         text = clientData.text.trim();
       }
 
@@ -1488,6 +1590,7 @@ wss.on("connection", async function (ws) {
         typeof clientData.name === "string" &&
         clientData.name.trim()
       ) {
+
         senderId =
           clientData.name.trim().slice(0, 10);
       }
@@ -1496,9 +1599,13 @@ wss.on("connection", async function (ws) {
         new Date().toISOString();
 
       const message = {
+
         text: text,
+
         senderId: senderId,
+
         timestamp: timestamp
+
       };
 
       console.log(
@@ -1509,10 +1616,11 @@ wss.on("connection", async function (ws) {
       chatHistory.push(message);
 
       while (chatHistory.length > MAX_HISTORY) {
+
         chatHistory.shift();
       }
 
-      // 全員に新着として送信
+      // 全ユーザーへ配信
       wss.clients.forEach(function (client) {
 
         if (client.readyState !== WebSocket.OPEN) {
@@ -1520,13 +1628,17 @@ wss.on("connection", async function (ws) {
         }
 
         const outgoingMessage = {
+
           type: "message",
+
           text: message.text,
+
           senderId: message.senderId,
+
           timestamp: message.timestamp,
 
-          // 同名ユーザーでも正確に自分を判定
           isSelf: client === ws
+
         };
 
         if (typeof client.chatSend === "function") {
@@ -1567,15 +1679,18 @@ wss.on("connection", async function (ws) {
       return;
     }
 
-    // 履歴読み込み中に受信した新着との重複を防ぐ
     const pendingTimestamps = new Set(
+
       pendingMessages
+
         .filter(function (item) {
           return item.type === "message";
         })
+
         .map(function (item) {
           return item.timestamp;
         })
+
     );
 
     const initialMessages = chatHistory.filter(
@@ -1592,7 +1707,6 @@ wss.on("connection", async function (ws) {
       initialMessages.length + "件"
     );
 
-    // 過去の履歴として送信
     for (const message of initialMessages) {
 
       if (ws.readyState !== WebSocket.OPEN) {
@@ -1601,18 +1715,22 @@ wss.on("connection", async function (ws) {
 
       ws.send(
         JSON.stringify({
+
           type: "history",
+
           text: message.text,
+
           senderId: message.senderId,
+
           timestamp: message.timestamp
+
         })
       );
     }
 
-    // 初期履歴送信完了
     initialHistorySent = true;
 
-    // 待機していた新着を配信
+    // 履歴送信中に届いた新着
     for (const message of pendingMessages) {
 
       if (ws.readyState === WebSocket.OPEN) {
@@ -1653,11 +1771,15 @@ wss.on("connection", async function (ws) {
   // ==========================================================
 
   ws.on("close", function () {
+
     console.log("[WS] Client disconnected");
+
   });
 
   ws.on("error", function (error) {
+
     console.error("[WS] Error:", error);
+
   });
 
 });
