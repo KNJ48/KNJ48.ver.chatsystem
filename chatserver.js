@@ -1786,3 +1786,165 @@ wss.on("connection", async function (ws) {
   });
 
 });
+
+
+// ============================================================
+// チャボ：Supabase Edge Function連携
+// ============================================================
+
+const BOT_FUNCTION_URL = process.env.BOT_FUNCTION_URL;
+const BOT_SHARED_SECRET = process.env.BOT_SHARED_SECRET;
+
+const BOT_NAME = "チャボ";
+const BOT_WAIT_MS = 2000;
+
+let botTimer = null;
+let botBusy = false;
+let botRevision = 0;
+let botLastMessageAt = 0;
+
+
+// 人の発言が来たら、判定を予約する
+function scheduleBotReply() {
+  if (!BOT_FUNCTION_URL || !BOT_SHARED_SECRET) {
+    console.warn(
+      "[BOT] BOT_FUNCTION_URL または BOT_SHARED_SECRET が未設定です"
+    );
+    return;
+  }
+
+  botRevision++;
+  botLastMessageAt = Date.now();
+
+  clearTimeout(botTimer);
+  botTimer = setTimeout(runBotReply, BOT_WAIT_MS);
+}
+
+
+// 会話の内容から、チャボが発言するか判断する
+async function runBotReply() {
+  // 前の判定が終わっていなければ、短く待って再確認
+  if (botBusy) {
+    botTimer = setTimeout(runBotReply, 500);
+    return;
+  }
+
+  // 最後の発言から2秒経っていなければ、残り時間を待つ
+  const remaining =
+    BOT_WAIT_MS - (Date.now() - botLastMessageAt);
+
+  if (remaining > 0) {
+    botTimer = setTimeout(runBotReply, remaining);
+    return;
+  }
+
+  const currentRevision = botRevision;
+
+  const conversation = chatHistory
+    .slice(-20)
+    .map(function (message) {
+      return {
+        senderId: message.senderId,
+        text: message.text
+      };
+    });
+
+  if (conversation.length === 0) return;
+
+  botBusy = true;
+
+  console.log("[BOT] 会話を読んで考えています...");
+
+  try {
+    const response = await fetch(BOT_FUNCTION_URL, {
+      method: "POST",
+
+      headers: {
+        "Content-Type": "application/json",
+        "x-bot-secret": BOT_SHARED_SECRET
+      },
+
+      body: JSON.stringify({
+        messages: conversation
+      }),
+
+      signal: AbortSignal.timeout(35000)
+    });
+
+    if (!response.ok) {
+      console.error(
+        "[BOT] Supabase HTTPエラー:",
+        response.status
+      );
+      return;
+    }
+
+    const decision = await response.json();
+
+    // 判定中に人の発言が来たら古い返答は捨てる
+    if (currentRevision !== botRevision) {
+      console.log(
+        "[BOT] 会話が進んだため、古い判定を破棄しました"
+      );
+      return;
+    }
+
+    if (
+      !decision ||
+      decision.should_reply !== true ||
+      typeof decision.text !== "string"
+    ) {
+      console.log("[BOT] 今回は見守ります");
+      return;
+    }
+
+    const text = decision.text.trim().slice(0, 300);
+
+    if (!text) return;
+
+    const message = {
+      text: text,
+      senderId: BOT_NAME,
+      timestamp: new Date().toISOString()
+    };
+
+    // 通常の会話と同じ履歴に追加
+    chatHistory.push(message);
+
+    while (chatHistory.length > MAX_HISTORY) {
+      chatHistory.shift();
+    }
+
+    // 既存チャットの全クライアントに配信
+    wss.clients.forEach(function (client) {
+      if (client.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      const outgoingMessage = {
+        type: "message",
+        text: message.text,
+        senderId: message.senderId,
+        timestamp: message.timestamp,
+        isSelf: false
+      };
+
+      if (typeof client.chatSend === "function") {
+        client.chatSend(outgoingMessage);
+      } else {
+        client.send(JSON.stringify(outgoingMessage));
+      }
+    });
+
+    console.log("[BOT] 発言:", text);
+
+    // 既存のGAS保存処理を使用
+    await saveMessageToGAS(message);
+
+  } catch (error) {
+    console.error("[BOT] エラー:", error.message);
+
+  } finally {
+    botBusy = false;
+  }
+}
