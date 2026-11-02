@@ -1653,6 +1653,9 @@ wss.on("connection", async function (ws) {
         }
       });
 
+      scheduleBotReply();
+
+      
       await saveMessageToGAS(message);
 
     } catch (error) {
