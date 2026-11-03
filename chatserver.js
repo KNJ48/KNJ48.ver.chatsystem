@@ -10,8 +10,8 @@ const { WebSocketServer, WebSocket } = require("ws");
 const app = express();
 const port = process.env.PORT || 3000;
 
-const GAS_DEPLOY_URL =
-  "https://script.google.com/macros/s/AKfycbxvqp1PutymnKwjSzUBnDR3QXz498J2Ba1TrwYrMlBGd-66VmxH_PRoFAfXChDHFfv0Bg/exec";
+const GAS_DEPLOY_URL = process.env.GAS_DEPLOY_URL;
+const GAS_SHARED_SECRET = process.env.GAS_SHARED_SECRET;
 
 const chatHistory = [];
 const MAX_HISTORY = 30;
@@ -1265,92 +1265,90 @@ const wss = new WebSocketServer({
 
 
 // ============================================================
-// GAS GET
+// GAS 共通通信
+// ============================================================
+
+async function callGAS(payload) {
+  if (!GAS_DEPLOY_URL || !GAS_SHARED_SECRET) {
+    throw new Error(
+      "GAS_DEPLOY_URL または GAS_SHARED_SECRET が未設定です"
+    );
+  }
+
+  const response = await fetch(GAS_DEPLOY_URL, {
+    method: "POST",
+    redirect: "follow",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      ...payload,
+      secret: GAS_SHARED_SECRET
+    }),
+    signal: AbortSignal.timeout(20000)
+  });
+
+  if (!response.ok) {
+    throw new Error("GAS HTTP " + response.status);
+  }
+
+  let data;
+
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new Error("GASの応答がJSONではありません");
+  }
+
+  if (!data || data.ok !== true) {
+    throw new Error(
+      "GASエラー: " +
+      (data && typeof data.error === "string"
+        ? data.error
+        : "詳細不明")
+    );
+  }
+
+  return data;
+}
+
+
+// ============================================================
+// GAS 履歴取得
 // ============================================================
 
 async function loadHistoryFromGAS() {
-
   if (historyLoaded) {
-
-    console.log("[GAS GET] 履歴はロード済みです");
-
+    console.log("[GAS] 履歴はロード済みです");
     return;
   }
 
   if (historyLoadingPromise) {
-
-    console.log("[GAS GET] 現在ロード中です");
-
+    console.log("[GAS] 現在ロード中です");
     return historyLoadingPromise;
   }
 
   historyLoadingPromise = (async function () {
-
     try {
+      console.log("[GAS] 履歴取得開始");
 
-      console.log("========================================");
-      console.log("[GAS GET] 接続開始");
-      console.log("[GAS GET] URL: " + GAS_DEPLOY_URL);
+      const result = await callGAS({
+        action: "read"
+      });
 
-      const response = await fetch(
-        GAS_DEPLOY_URL + "?action=read",
-        {
-          method: "GET",
-          redirect: "follow",
-          cache: "no-store"
-        }
-      );
-
-      console.log(
-        "[GAS GET] HTTP STATUS: " +
-        response.status
-      );
-
-      console.log(
-        "[GAS GET] FINAL URL: " +
-        response.url
-      );
-
-      const body = await response.text();
-
-      if (!response.ok) {
-
-        throw new Error(
-          "HTTP " + response.status + " / " + body
-        );
+      if (!Array.isArray(result.messages)) {
+        throw new Error("GASの履歴形式が不正です");
       }
 
-      let data;
-
-      try {
-
-        data = JSON.parse(body);
-
-      } catch (error) {
-
-        throw new Error(
-          "GAS response is not JSON: " + body
-        );
-      }
-
-      if (!Array.isArray(data)) {
-
-        throw new Error(
-          "GAS response is not an array"
-        );
-      }
-
-      // GAS読み込み中の新着を保持
+      // 読み込み中に届いた新着を保持
       const currentMessages = chatHistory.slice();
 
       chatHistory.length = 0;
 
-      data.forEach(function (message) {
-
+      result.messages.forEach(function (message) {
         if (!message) return;
 
         chatHistory.push({
-
           text:
             message.text == null
               ? ""
@@ -1362,17 +1360,13 @@ async function loadHistoryFromGAS() {
               ? "ゲスト"
               : String(message.sender_id),
 
-          timestamp:
-            message.timestamp || null
-
+          timestamp: message.timestamp || null
         });
       });
 
       // 読み込み中の新着を復元
       for (const message of currentMessages) {
-
         const exists = chatHistory.some(function (item) {
-
           return (
             item.timestamp === message.timestamp &&
             item.text === message.text &&
@@ -1391,25 +1385,21 @@ async function loadHistoryFromGAS() {
 
       historyLoaded = true;
 
-      console.log("[GAS GET] 成功");
-
       console.log(
-        "[GAS GET] 履歴件数: " +
-        chatHistory.length
+        "[GAS] 履歴取得成功: " +
+        chatHistory.length +
+        "件"
       );
 
-      console.log("========================================");
-
     } catch (error) {
-
       historyLoaded = false;
 
-      console.error("!!!!!!!! GAS GET ERROR !!!!!!!!");
-      console.error(error);
-      console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+      console.error(
+        "[GAS] 履歴取得失敗:",
+        error instanceof Error ? error.message : "unknown"
+      );
 
     } finally {
-
       historyLoadingPromise = null;
     }
   })();
@@ -1419,105 +1409,26 @@ async function loadHistoryFromGAS() {
 
 
 // ============================================================
-// GAS POST
+// GAS メッセージ保存
 // ============================================================
 
 async function saveMessageToGAS(message) {
-
   try {
-
-    const payload = {
-
+    await callGAS({
       action: "write",
-
       text: message.text,
-
       sender_id: message.senderId,
-
       timestamp: message.timestamp
+    });
 
-    };
-
-    console.log("[GAS POST] 保存開始");
-
-    console.log(
-      "[GAS POST] DATA: " +
-      JSON.stringify(payload)
-    );
-
-    const response = await fetch(
-      GAS_DEPLOY_URL,
-      {
-        method: "POST",
-        redirect: "follow",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      }
-    );
-
-    console.log(
-      "[GAS POST] HTTP STATUS: " +
-      response.status
-    );
-
-    console.log(
-      "[GAS POST] FINAL URL: " +
-      response.url
-    );
-
-    const responseBody = await response.text();
-
-    console.log(
-      "[GAS POST] RESPONSE: " +
-      responseBody
-    );
-
-    if (!response.ok) {
-
-      throw new Error(
-        "HTTP " + response.status +
-        ": " + responseBody
-      );
-    }
-
-    let result;
-
-    try {
-
-      result = JSON.parse(responseBody);
-
-    } catch (error) {
-
-      throw new Error(
-        "GAS POST response is not JSON: " +
-        responseBody
-      );
-    }
-
-    if (!result || result.ok !== true) {
-
-      throw new Error(
-        result && result.error
-          ? result.error
-          : "GAS save failed"
-      );
-    }
-
-    console.log(
-      "[GAS POST] スプレッドシート保存成功"
-    );
-
+    console.log("[GAS] メッセージ保存成功");
     return true;
 
   } catch (error) {
-
-    console.error("!!!!!!!! GAS POST ERROR !!!!!!!!");
-
-    console.error(error);
-
-    console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    console.error(
+      "[GAS] メッセージ保存失敗:",
+      error instanceof Error ? error.message : "unknown"
+    );
 
     return false;
   }
