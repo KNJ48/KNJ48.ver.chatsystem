@@ -1751,12 +1751,37 @@ async function runBotReply() {
 
   const currentRevision = botRevision;
 
+  // 最新の発言からさかのぼり、
+  // 30分以上空いた箇所を会話の区切りにする。
+  const CONVERSATION_GAP_MS = 30 * 60 * 1000;
+
+  let startIndex = 0;
+
+  for (let i = chatHistory.length - 1; i > 0; i--) {
+    const currentTime = Date.parse(chatHistory[i].timestamp);
+    const previousTime = Date.parse(chatHistory[i - 1].timestamp);
+
+    // 時刻がない・不正な場合は、その箇所では区切らない。
+    if (
+      !Number.isFinite(currentTime) ||
+      !Number.isFinite(previousTime)
+    ) {
+      continue;
+    }
+
+    if (currentTime - previousTime >= CONVERSATION_GAP_MS) {
+      startIndex = i;
+      break;
+    }
+  }
+
   const conversation = chatHistory
-    .slice(-20)
+    .slice(startIndex)
     .map(function (message) {
       return {
         senderId: message.senderId,
-        text: message.text
+        text: message.text,
+        timestamp: message.timestamp
       };
     });
 
