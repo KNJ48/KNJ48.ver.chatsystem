@@ -1564,7 +1564,7 @@ wss.on("connection", async function (ws) {
         }
       });
 
-      scheduleBotReply();
+      scheduleBotReply(message);
 
       
       await saveMessageToGAS(message);
@@ -1701,22 +1701,114 @@ wss.on("connection", async function (ws) {
 
 // ============================================================
 // チャボ：Supabase Edge Function連携
+//
+// 「チャボ」「ちゃぼ」で参加開始
+// 投稿が30分空いたら会話終了
+// 会話中は新着ごとに順番に判定
 // ============================================================
 
 const BOT_FUNCTION_URL = process.env.BOT_FUNCTION_URL;
 const BOT_SHARED_SECRET = process.env.BOT_SHARED_SECRET;
 
 const BOT_NAME = "チャボ";
-const BOT_WAIT_MS = 2000;
 
-let botTimer = null;
-let botBusy = false;
+const CONVERSATION_GAP_MS = 30 * 60 * 1000;
+
+// 会話が長くなりすぎないようにする上限
+const MAX_BOT_CONTEXT = 100;
+
+// 処理待ちの上限
+const MAX_BOT_QUEUE = 100;
+
+let conversationMessages = [];
+let conversationActive = false;
+let conversationLastMessageAt = 0;
+
+// 新しい会話になったら増やす
+let conversationGeneration = 0;
+
+// 新着が来るたびに増やす
 let botRevision = 0;
-let botLastMessageAt = 0;
+
+const botQueue = [];
+let botBusy = false;
 
 
-// 人の発言が来たら、判定を予約する
-function scheduleBotReply() {
+// ============================================================
+// 会話履歴の管理
+// ============================================================
+
+function appendConversationMessage(message) {
+  conversationMessages.push({
+    senderId: message.senderId,
+    text: message.text,
+    timestamp: message.timestamp
+  });
+
+  while (conversationMessages.length > MAX_BOT_CONTEXT) {
+    conversationMessages.shift();
+  }
+}
+
+
+function isBotMentioned(text) {
+  return (
+    text.includes("チャボ") ||
+    text.includes("ちゃぼ")
+  );
+}
+
+
+// ============================================================
+// 新着投稿ごとに呼ばれる
+// ============================================================
+
+function scheduleBotReply(message) {
+  if (!message || typeof message.text !== "string") {
+    return;
+  }
+
+  // チャボ名義の投稿ではAIを起動しない。
+  // 表示名だけなので、人が名乗った場合も同じ扱い。
+  if (message.senderId === BOT_NAME) {
+    console.log(
+      "[BOT] チャボ名義の投稿なので判定しません"
+    );
+    return;
+  }
+
+  const now = Date.now();
+
+  // 30分以上投稿がなければ新しい会話。
+  if (
+    conversationLastMessageAt > 0 &&
+    now - conversationLastMessageAt >= CONVERSATION_GAP_MS
+  ) {
+    conversationMessages = [];
+    conversationActive = false;
+    conversationGeneration++;
+
+    console.log("[BOT] 30分経過：会話を終了");
+  }
+
+  conversationLastMessageAt = now;
+
+  // 呼ばれる前の発言も、同じ会話の流れとして記録する。
+  appendConversationMessage(message);
+
+  botRevision++;
+
+  if (!conversationActive) {
+    if (!isBotMentioned(message.text)) {
+      console.log("[BOT] 呼ばれるまで待機");
+      return;
+    }
+
+    conversationActive = true;
+
+    console.log("[BOT] 呼ばれたので会話に参加");
+  }
+
   if (!BOT_FUNCTION_URL || !BOT_SHARED_SECRET) {
     console.warn(
       "[BOT] BOT_FUNCTION_URL または BOT_SHARED_SECRET が未設定です"
@@ -1724,163 +1816,172 @@ function scheduleBotReply() {
     return;
   }
 
-  botRevision++;
-  botLastMessageAt = Date.now();
+  if (botQueue.length >= MAX_BOT_QUEUE) {
+    console.error(
+      "[BOT] 処理待ちが多すぎるため、この投稿の判定をスキップ"
+    );
+    return;
+  }
 
-  clearTimeout(botTimer);
-  botTimer = setTimeout(runBotReply, BOT_WAIT_MS);
+  // この投稿時点までの履歴を保存。
+  // 後から届いた投稿が、この判定の最新発言にならないようにする。
+  botQueue.push({
+    generation: conversationGeneration,
+    revision: botRevision,
+    messages: conversationMessages.map(function (item) {
+      return { ...item };
+    })
+  });
+
+  console.log(
+    "[BOT] 判定を予約。待機中:",
+    botQueue.length,
+    "件"
+  );
+
+  processBotQueue();
 }
 
 
-// 会話の内容から、チャボが発言するか判断する
-async function runBotReply() {
-  // 前の判定が終わっていなければ、短く待って再確認
-  if (botBusy) {
-    botTimer = setTimeout(runBotReply, 500);
-    return;
-  }
+// ============================================================
+// 待機中の投稿を順番に判定する
+// ============================================================
 
-  // 最後の発言から2秒経っていなければ、残り時間を待つ
-  const remaining =
-    BOT_WAIT_MS - (Date.now() - botLastMessageAt);
-
-  if (remaining > 0) {
-    botTimer = setTimeout(runBotReply, remaining);
-    return;
-  }
-
-  const currentRevision = botRevision;
-
-  // 最新の発言からさかのぼり、
-  // 30分以上空いた箇所を会話の区切りにする。
-  const CONVERSATION_GAP_MS = 30 * 60 * 1000;
-
-  let startIndex = 0;
-
-  for (let i = chatHistory.length - 1; i > 0; i--) {
-    const currentTime = Date.parse(chatHistory[i].timestamp);
-    const previousTime = Date.parse(chatHistory[i - 1].timestamp);
-
-    // 時刻がない・不正な場合は、その箇所では区切らない。
-    if (
-      !Number.isFinite(currentTime) ||
-      !Number.isFinite(previousTime)
-    ) {
-      continue;
-    }
-
-    if (currentTime - previousTime >= CONVERSATION_GAP_MS) {
-      startIndex = i;
-      break;
-    }
-  }
-
-  const conversation = chatHistory
-    .slice(startIndex)
-    .map(function (message) {
-      return {
-        senderId: message.senderId,
-        text: message.text,
-        timestamp: message.timestamp
-      };
-    });
-
-  if (conversation.length === 0) return;
+async function processBotQueue() {
+  if (botBusy) return;
 
   botBusy = true;
 
-  console.log("[BOT] 会話を読んで考えています...");
-
   try {
-    const response = await fetch(BOT_FUNCTION_URL, {
-      method: "POST",
+    while (botQueue.length > 0) {
+      const job = botQueue.shift();
 
-      headers: {
-        "Content-Type": "application/json",
-        "x-bot-secret": BOT_SHARED_SECRET
-      },
+      if (!job) continue;
 
-      body: JSON.stringify({
-        messages: conversation
-      }),
+      // 別の会話になった古い待機分は処理しない。
+      if (job.generation !== conversationGeneration) {
+        console.log(
+          "[BOT] 古い会話の待機分を破棄"
+        );
+        continue;
+      }
 
-      signal: AbortSignal.timeout(35000)
-    });
-
-    if (!response.ok) {
-      console.error(
-        "[BOT] Supabase HTTPエラー:",
-        response.status
-      );
-      return;
-    }
-
-    const decision = await response.json();
-
-    // 判定中に人の発言が来たら古い返答は捨てる
-    if (currentRevision !== botRevision) {
       console.log(
-        "[BOT] 会話が進んだため、古い判定を破棄しました"
+        "[BOT] 会話を読んで考えています...",
+        "履歴:",
+        job.messages.length,
+        "件"
       );
-      return;
-    }
 
-    if (
-      !decision ||
-      decision.should_reply !== true ||
-      typeof decision.text !== "string"
-    ) {
-      console.log("[BOT] 今回は見守ります");
-      return;
-    }
+      try {
+        const response = await fetch(BOT_FUNCTION_URL, {
+          method: "POST",
 
-    const text = decision.text.trim().slice(0, 300);
+          headers: {
+            "Content-Type": "application/json",
+            "x-bot-secret": BOT_SHARED_SECRET
+          },
 
-    if (!text) return;
+          body: JSON.stringify({
+            messages: job.messages
+          }),
 
-    const message = {
-      text: text,
-      senderId: BOT_NAME,
-      timestamp: new Date().toISOString()
-    };
+          signal: AbortSignal.timeout(35000)
+        });
 
-    // 通常の会話と同じ履歴に追加
-    chatHistory.push(message);
+        if (!response.ok) {
+          console.error(
+            "[BOT] Supabase HTTPエラー:",
+            response.status
+          );
+          continue;
+        }
 
-    while (chatHistory.length > MAX_HISTORY) {
-      chatHistory.shift();
-    }
+        const decision = await response.json();
 
-    // 既存チャットの全クライアントに配信
-    wss.clients.forEach(function (client) {
-      if (client.readyState !== WebSocket.OPEN) {
-        return;
+        // 判定中に新着が来た場合や会話が変わった場合、
+        // 古い返答をチャットに流さない。
+        if (
+          job.generation !== conversationGeneration ||
+          job.revision !== botRevision
+        ) {
+          console.log(
+            "[BOT] 会話が進んだため、古い判定を破棄"
+          );
+          continue;
+        }
+
+        if (
+          !decision ||
+          decision.should_reply !== true ||
+          typeof decision.text !== "string"
+        ) {
+          console.log("[BOT] 今回は見守ります");
+          continue;
+        }
+
+        const text = decision.text.trim().slice(0, 300);
+
+        if (!text) continue;
+
+        const botMessage = {
+          text: text,
+          senderId: BOT_NAME,
+          timestamp: new Date().toISOString()
+        };
+
+        // 画面用の通常履歴にも追加
+        chatHistory.push(botMessage);
+
+        while (chatHistory.length > MAX_HISTORY) {
+          chatHistory.shift();
+        }
+
+        // AIに渡す会話履歴にも追加
+        appendConversationMessage(botMessage);
+
+        // 全クライアントへ配信
+        wss.clients.forEach(function (client) {
+          if (client.readyState !== WebSocket.OPEN) {
+            return;
+          }
+
+          const outgoingMessage = {
+            type: "message",
+            text: botMessage.text,
+            senderId: botMessage.senderId,
+            timestamp: botMessage.timestamp,
+            isSelf: false
+          };
+
+          if (typeof client.chatSend === "function") {
+            client.chatSend(outgoingMessage);
+          } else {
+            client.send(JSON.stringify(outgoingMessage));
+          }
+        });
+
+        console.log("[BOT] 発言:", text);
+
+        // GAS保存は従来の処理を使う
+        await saveMessageToGAS(botMessage);
+
+      } catch (error) {
+        console.error(
+          "[BOT] エラー:",
+          error instanceof Error
+            ? error.message
+            : "unknown"
+        );
       }
-
-      const outgoingMessage = {
-        type: "message",
-        text: message.text,
-        senderId: message.senderId,
-        timestamp: message.timestamp,
-        isSelf: false
-      };
-
-      if (typeof client.chatSend === "function") {
-        client.chatSend(outgoingMessage);
-      } else {
-        client.send(JSON.stringify(outgoingMessage));
-      }
-    });
-
-    console.log("[BOT] 発言:", text);
-
-    // 既存のGAS保存処理を使用
-    await saveMessageToGAS(message);
-
-  } catch (error) {
-    console.error("[BOT] エラー:", error.message);
+    }
 
   } finally {
     botBusy = false;
+
+    // 念のため、終了直前に待機分が増えた場合も再開する。
+    if (botQueue.length > 0) {
+      processBotQueue();
+    }
   }
 }
