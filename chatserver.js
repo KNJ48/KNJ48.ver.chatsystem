@@ -19,6 +19,14 @@ const MAX_HISTORY = 30;
 let historyLoaded = false;
 let historyLoadingPromise = null;
 
+// 管理者による再読み込みの状態
+let adminReloading = false;
+let messagesDuringAdminReload = [];
+
+// 管理者による再読み込みの状態
+let adminReloading = false;
+let messagesDuringAdminReload = [];
+
 
 // ============================================================
 // HTML
@@ -1084,6 +1092,27 @@ ws.onmessage = function (event) {
 
     const data = JSON.parse(event.data);
 
+    // 管理者がGASから再読み込みしたとき、
+    // 画面の履歴を受け取った履歴に入れ替える。
+    if (data && data.type === "history_reset") {
+      messages.replaceChildren();
+
+      if (Array.isArray(data.messages)) {
+        for (const message of data.messages) {
+          ws.onmessage({
+            data: JSON.stringify({
+              type: "history",
+              text: message.text,
+              senderId: message.senderId,
+              timestamp: message.timestamp
+            })
+          });
+        }
+      }
+
+      return;
+    }
+
     if (
       !data ||
       typeof data.text !== "string"
@@ -1412,7 +1441,22 @@ async function loadHistoryFromGAS() {
 // GAS メッセージ保存
 // ============================================================
 
-async function saveMessageToGAS(message) {
+// 処理中のGAS保存を追跡する
+const pendingGASWrites = new Set();
+
+function saveMessageToGAS(message) {
+  const promise = saveMessageToGASInternal(message);
+
+  pendingGASWrites.add(promise);
+
+  promise.finally(function () {
+    pendingGASWrites.delete(promise);
+  });
+
+  return promise;
+}
+
+async function saveMessageToGASInternal(message) {
   try {
     await callGAS({
       action: "write",
@@ -1433,7 +1477,6 @@ async function saveMessageToGAS(message) {
     return false;
   }
 }
-
 
 // ============================================================
 // WEBSOCKET CONNECTION
@@ -1525,6 +1568,11 @@ wss.on("connection", async function (ws) {
       );
 
       chatHistory.push(message);
+
+      // GAS再読み込み中に届いた新着を記録する
+      if (adminReloading) {
+        messagesDuringAdminReload.push({ ...message });
+      }
 
       while (chatHistory.length > MAX_HISTORY) {
 
@@ -1985,3 +2033,415 @@ async function processBotQueue() {
     }
   }
 }
+// ============================================================
+// 管理者用：GASから履歴を再読み込み
+// ============================================================
+
+const crypto = require("crypto");
+
+app.use(express.json({ limit: "10kb" }));
+
+
+function isCorrectAdminSecret(input) {
+  if (
+    !BOT_SHARED_SECRET ||
+    typeof input !== "string"
+  ) {
+    return false;
+  }
+
+  const expected = Buffer.from(BOT_SHARED_SECRET, "utf8");
+  const actual = Buffer.from(input, "utf8");
+
+  if (expected.length !== actual.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(expected, actual);
+}
+
+
+function normalizeGASMessage(message) {
+  return {
+    text:
+      message.text == null
+        ? ""
+        : String(message.text),
+
+    senderId:
+      message.sender_id == null ||
+      message.sender_id === ""
+        ? "ゲスト"
+        : String(message.sender_id),
+
+    timestamp: message.timestamp || null
+  };
+}
+
+
+// ISO形式とJST形式など、同じ日時の別表記も比較する
+function messagesAreEqual(a, b) {
+  const aTime = Date.parse(a.timestamp);
+  const bTime = Date.parse(b.timestamp);
+
+  const sameTime =
+    Number.isFinite(aTime) && Number.isFinite(bTime)
+      ? aTime === bTime
+      : a.timestamp === b.timestamp;
+
+  return (
+    sameTime &&
+    a.text === b.text &&
+    a.senderId === b.senderId
+  );
+}
+
+
+// GASから読み直した履歴をチャボ用にも反映する。
+// 参加状態は復元せず、再度呼ばれるまで待機する。
+function rebuildBotConversationFromHistory() {
+  conversationMessages = [];
+  conversationActive = false;
+  conversationLastMessageAt = 0;
+
+  let previousTime = 0;
+
+  for (const message of chatHistory) {
+    const time = Date.parse(message.timestamp);
+
+    if (!Number.isFinite(time)) {
+      conversationMessages = [];
+      previousTime = 0;
+      continue;
+    }
+
+    if (
+      previousTime > 0 &&
+      (
+        time < previousTime ||
+        time - previousTime >= CONVERSATION_GAP_MS
+      )
+    ) {
+      conversationMessages = [];
+    }
+
+    appendConversationMessage(message);
+    previousTime = time;
+  }
+
+  if (
+    previousTime > 0 &&
+    Date.now() - previousTime < CONVERSATION_GAP_MS &&
+    Date.now() >= previousTime
+  ) {
+    conversationLastMessageAt = previousTime;
+  } else {
+    conversationMessages = [];
+    conversationLastMessageAt = 0;
+  }
+}
+
+
+function sendHistoryResetToClients() {
+  const payload = {
+    type: "history_reset",
+
+    messages: chatHistory.map(function (message) {
+      return { ...message };
+    })
+  };
+
+  wss.clients.forEach(function (client) {
+    if (client.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    if (typeof client.chatSend === "function") {
+      client.chatSend(payload);
+    } else {
+      client.send(JSON.stringify(payload));
+    }
+  });
+}
+
+
+// 管理画面。合言葉はURLに入れない。
+app.get("/admin", function (req, res) {
+  res.set("Cache-Control", "no-store");
+
+  res.send(`
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>チャット管理</title>
+
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #111;
+      color: #fff;
+      max-width: 500px;
+      margin: 40px auto;
+      padding: 0 16px;
+    }
+
+    input, button {
+      font-size: 16px;
+      padding: 10px;
+      margin: 8px 0;
+    }
+
+    input {
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    #status {
+      white-space: pre-wrap;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>チャット管理</h1>
+
+  <p>
+    GASから履歴を読み直します。<br>
+    スプレッドシートの内容は削除しません。
+  </p>
+
+  <form id="reload-form">
+    <label for="secret">いつもの合言葉</label><br>
+
+    <input
+      id="secret"
+      type="password"
+      autocomplete="off"
+      required
+    ><br>
+
+    <button id="reload-button" type="submit">
+      GASから再読み込み
+    </button>
+  </form>
+
+  <p id="status"></p>
+
+  <script>
+    const form = document.getElementById("reload-form");
+    const secretInput = document.getElementById("secret");
+    const button = document.getElementById("reload-button");
+    const status = document.getElementById("status");
+
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+
+      if (!confirm("GASから履歴を再読み込みしますか？")) {
+        return;
+      }
+
+      button.disabled = true;
+      status.textContent = "再読み込み中...";
+
+      try {
+        const response = await fetch("/admin/reload-history", {
+          method: "POST",
+
+          headers: {
+            "Content-Type": "application/json"
+          },
+
+          body: JSON.stringify({
+            secret: secretInput.value
+          })
+        });
+
+        const result = await response.json();
+
+        if (!response.ok || !result.ok) {
+          status.textContent =
+            "失敗: " + (result.error || "不明なエラー");
+
+          return;
+        }
+
+        status.textContent =
+          "再読み込み完了！ 履歴 " +
+          result.count +
+          "件。チャボは呼ばれるまで待機します。";
+
+        secretInput.value = "";
+
+      } catch (error) {
+        status.textContent =
+          "通信に失敗しました。Renderのログも確認してください。";
+
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
+  `);
+});
+
+
+app.post("/admin/reload-history", async function (req, res) {
+  res.set("Cache-Control", "no-store");
+
+  // ブラウザからの同一オリジン要求を確認する
+  const origin = req.get("origin");
+  const host = req.get("host");
+
+  let sameOrigin = false;
+
+  try {
+    const parsedOrigin = new URL(origin);
+
+    sameOrigin =
+      parsedOrigin.host === host &&
+      (
+        parsedOrigin.protocol === "https:" ||
+        parsedOrigin.protocol === "http:"
+      );
+
+  } catch (error) {
+    sameOrigin = false;
+  }
+
+  if (!sameOrigin) {
+    return res.status(403).json({
+      ok: false,
+      error: "このページからの操作を確認できません"
+    });
+  }
+
+  if (!isCorrectAdminSecret(req.body && req.body.secret)) {
+    return res.status(403).json({
+      ok: false,
+      error: "合言葉が違います"
+    });
+  }
+
+  if (adminReloading) {
+    return res.status(409).json({
+      ok: false,
+      error: "すでに再読み込み中です"
+    });
+  }
+
+  adminReloading = true;
+  messagesDuringAdminReload = [];
+
+  // 実行中の古いAI応答と、待機中の判定を無効化する。
+  // botBusyは変更しない。
+  conversationGeneration++;
+  botRevision++;
+  botQueue.length = 0;
+
+  try {
+    // 起動時の履歴取得が動いていれば先に待つ
+    if (historyLoadingPromise) {
+      await historyLoadingPromise;
+    }
+
+    // 再読み込み開始時点で処理中のGAS保存を待つ
+    const writesAtStart = Array.from(pendingGASWrites);
+
+    if (writesAtStart.length > 0) {
+      const results = await Promise.all(writesAtStart);
+
+      if (results.some(function (success) {
+        return success !== true;
+      })) {
+        throw new Error(
+          "処理中だったメッセージのGAS保存に失敗しました"
+        );
+      }
+    }
+
+    console.log("[ADMIN] GAS履歴の再読み込み開始");
+
+    const result = await callGAS({
+      action: "read"
+    });
+
+    if (!Array.isArray(result.messages)) {
+      throw new Error("GASの履歴形式が不正です");
+    }
+
+    const reloadedMessages = result.messages
+      .filter(function (message) {
+        return message && typeof message === "object";
+      })
+      .map(normalizeGASMessage);
+
+    // 再読み込み中の新着を可能な範囲で保持する
+    for (const message of messagesDuringAdminReload) {
+      const exists = reloadedMessages.some(function (item) {
+        return messagesAreEqual(item, message);
+      });
+
+      if (!exists) {
+        reloadedMessages.push(message);
+      }
+    }
+
+    // GASの取得に成功してから履歴を入れ替える
+    chatHistory.length = 0;
+
+    const latestMessages =
+      reloadedMessages.slice(-MAX_HISTORY);
+
+    for (const message of latestMessages) {
+      chatHistory.push(message);
+    }
+
+    historyLoaded = true;
+
+    // 再読み込み中に予約されたAI判定も無効化する
+    conversationGeneration++;
+    botRevision++;
+    botQueue.length = 0;
+
+    rebuildBotConversationFromHistory();
+    sendHistoryResetToClients();
+
+    console.log(
+      "[ADMIN] GAS履歴の再読み込み成功:",
+      chatHistory.length,
+      "件"
+    );
+
+    return res.json({
+      ok: true,
+      count: chatHistory.length
+    });
+
+  } catch (error) {
+    console.error(
+      "[ADMIN] GAS履歴の再読み込み失敗:",
+      error instanceof Error
+        ? error.message
+        : "unknown"
+    );
+
+    return res.status(500).json({
+      ok: false,
+      error:
+        "GASから履歴を読み込めませんでした。Renderのログを確認してください"
+    });
+
+  } finally {
+    adminReloading = false;
+    messagesDuringAdminReload = [];
+  }
+});
