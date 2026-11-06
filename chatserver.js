@@ -23,10 +23,6 @@ let historyLoadingPromise = null;
 let adminReloading = false;
 let messagesDuringAdminReload = [];
 
-// 管理者による再読み込みの状態
-let adminReloading = false;
-let messagesDuringAdminReload = [];
-
 
 // ============================================================
 // HTML
