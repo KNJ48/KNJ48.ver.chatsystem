@@ -37,7 +37,7 @@ app.get("/", function (req, res) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>カスタムチャットシステム Pro</title>
+<title>𒈗 𒅗 𒀀𒈾 𒂷𒂊 𒆕𒀀</title>
 
 <style>
 
@@ -584,7 +584,7 @@ urlInput.addEventListener("keydown", function (event) {
 // 未読通知
 // ============================================================
 
-const BASE_TITLE = "カスタムチャットシステム Pro";
+const BASE_TITLE = "𒈗 𒅗 𒀀𒈾 𒂷𒂊 𒆕𒀀";
 
 let unreadCount = 0;
 let activeNotification = null;
