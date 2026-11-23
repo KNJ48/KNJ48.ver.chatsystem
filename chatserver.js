@@ -584,7 +584,7 @@ urlInput.addEventListener("keydown", function (event) {
 // 未読通知
 // ============================================================
 
-const BASE_TITLE = "𒈗 𒅗 𒀀𒈾 𒂷𒂊 𒆕𒀀";
+const BASE_TITLE = "カスタムチャットシステム PRO";
 
 let unreadCount = 0;
 let activeNotification = null;
