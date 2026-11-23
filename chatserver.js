@@ -37,7 +37,7 @@ app.get("/", function (req, res) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>𒈗 𒅗 𒀀𒈾 𒂷𒂊 𒆕𒀀</title>
+<title>カスタムチャットシステム PRO</title>
 
 <style>
 
